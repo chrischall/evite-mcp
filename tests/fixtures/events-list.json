@@ -1,0 +1,100 @@
+{
+  "_note": "Captured from the live internal API via the discovery spike (2026-05-31), PII scrubbed (ids/names/addresses replaced with placeholders). Real field names, types, and enum values preserved.",
+  "endpoint": "GET /services/events/v1/",
+  "query": {
+    "filter": "(free text search, empty for none)",
+    "filterBy": "all | host | others   (others = events where you are a guest)",
+    "numResults": "page size, e.g. 5 or 10",
+    "offset": "pagination offset",
+    "status": "repeatable param: upcoming | draft | archived | past | canceled",
+    "type": "invitation"
+  },
+  "response": {
+    "events": [
+      {
+        "template_name": "poolfloaties_ani",
+        "host_id": "HOSTID0",
+        "known_timezone_name": "America/New_York",
+        "rsvp_off": false,
+        "used_as": "invitation",
+        "is_fabric_premium": false,
+        "is_upgrade": false,
+        "event_id": "EVENTID0",
+        "guest_status": 1,
+        "is_invite": true,
+        "origin": 21,
+        "wording_type": "invitation",
+        "title": "Sample Host Event",
+        "start": "2026-05-29T15:30:00.000Z",
+        "status": "past",
+        "past": true,
+        "is_host": true,
+        "timezone": "ET",
+        "rsvp": "yes",
+        "is_pending_cohost": false,
+        "guest_id": "GUESTID0",
+        "rendered_image_url": "https://example.com/card.png",
+        "host_name": "Sample Host",
+        "updated": "2026-05-20T12:00:00.000Z",
+        "location": {
+          "location_name": "Venue",
+          "street_address": "123 Main St",
+          "unit_num": "",
+          "city": "City",
+          "state": "ST",
+          "zip_code": "00000",
+          "place_id": "PLACEID"
+        },
+        "end": "2026-05-29T20:00:00.000Z",
+        "event_category": "birthday"
+      },
+      {
+        "template_name": "generic",
+        "host_id": "HOSTID1",
+        "known_timezone_name": "America/New_York",
+        "rsvp_off": false,
+        "used_as": "invitation",
+        "is_fabric_premium": false,
+        "is_upgrade": false,
+        "event_id": "EVENTID1",
+        "guest_status": 2,
+        "is_invite": true,
+        "origin": 21,
+        "wording_type": "invitation",
+        "title": "Sample Guest Event",
+        "start": "2026-05-15T18:00:00.000Z",
+        "status": "past",
+        "past": true,
+        "is_host": false,
+        "timezone": "ET",
+        "rsvp": "maybe",
+        "is_pending_cohost": false,
+        "guest_id": "GUESTID1",
+        "rendered_image_url": "https://example.com/card.png",
+        "host_name": "Sample Host",
+        "updated": "2026-05-10T09:00:00.000Z",
+        "location": {
+          "location_name": "Venue",
+          "street_address": "456 Oak Ave",
+          "unit_num": "2B",
+          "city": "City",
+          "state": "ST",
+          "zip_code": "00000",
+          "place_id": "PLACEID"
+        },
+        "end": "2026-05-15T21:00:00.000Z",
+        "event_category": "party"
+      }
+    ],
+    "totals": {
+      "all": 76,
+      "sending": 10,
+      "draft": 0,
+      "received": 65,
+      "canceled": 1,
+      "past": 76,
+      "upcoming": 0,
+      "archived": 76
+    }
+  }
+}

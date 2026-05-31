@@ -1,0 +1,2 @@
+# Spike fixtures land here (PII-scrubbed) once the discovery spike runs against a live tab.
+# See docs/EVITE-API.md and scripts/spike-capture.mjs.

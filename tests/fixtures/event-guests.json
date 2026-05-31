@@ -1,0 +1,73 @@
+{
+  "_note": "Shape captured from GET /services/event/v1/{id}/guests/ via the discovery spike (2026-05-31). Real field names/types/enums; values are synthetic (no real guest PII).",
+  "endpoint": "GET /services/event/v1/{event_id}/guests/",
+  "response": {
+    "guests": [
+      {
+        "guestId": "GUESTID0",
+        "userId": "USERID0",
+        "name": "Sample Host",
+        "email": "host@example.com",
+        "phone": null,
+        "guestType": "host",
+        "rsvpResponse": "yes",
+        "numberOfAdults": 1,
+        "numberOfKids": 0,
+        "checkedIn": false,
+        "comments": null,
+        "deliveryStatus": "delivered",
+        "inviteMethod": "email",
+        "invitedBy": null,
+        "sentOn": null,
+        "timesViewed": 3,
+        "avatarUrl": "https://example.com/avatar.png",
+        "shortLink": "https://evite.me/XXXXXX",
+        "longLink": null,
+        "created": "2026-05-20T12:00:00.000Z",
+        "updated": "2026-05-21T08:00:00.000Z"
+      },
+      {
+        "guestId": "GUESTID1",
+        "userId": "USERID1",
+        "name": "Sample Guest",
+        "email": "guest@example.com",
+        "phone": null,
+        "guestType": "guest",
+        "rsvpResponse": "maybe",
+        "numberOfAdults": 2,
+        "numberOfKids": 1,
+        "checkedIn": false,
+        "comments": null,
+        "deliveryStatus": "delivered",
+        "inviteMethod": "email",
+        "invitedBy": null,
+        "sentOn": null,
+        "timesViewed": 1,
+        "avatarUrl": "https://example.com/avatar.png",
+        "shortLink": "https://evite.me/YYYYYY",
+        "longLink": null,
+        "created": "2026-05-20T12:00:00.000Z",
+        "updated": "2026-05-22T09:30:00.000Z"
+      }
+    ],
+    "summary": {
+      "yes": 20,
+      "no": 0,
+      "maybe": 0,
+      "noReply": 0,
+      "adultsYes": 20,
+      "kidsYes": 0,
+      "adultsMaybe": 0,
+      "kidsMaybe": 0,
+      "inviteesYes": 20,
+      "inviteesMaybe": 0,
+      "lockedStatus": "unlocked"
+    },
+    "_enums": {
+      "guestType": ["host", "cohost", "guest"],
+      "rsvpResponse": ["yes", "no", "maybe", "noreply"],
+      "deliveryStatus": ["delivered"],
+      "inviteMethod": ["email", null]
+    }
+  }
+}

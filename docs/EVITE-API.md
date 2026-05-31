@@ -1,83 +1,83 @@
 # Evite Internal API — Discovery Notes
 
-> **STATUS: partially verified from a live session (2026-05-31).** Captured by
-> driving a signed-in evite.com tab (Claude-in-Chrome) and reading the network +
-> in-page `fetch`. The **events-list read** and the **auth model** are confirmed
-> against real responses; the **guest-list / messages / write** endpoint paths
-> are not yet pinned (see "Still to capture"). Evite has no public API — all of
-> this is the site's own internal `/services/` layer.
+> **STATUS: read API + auth fully verified from a live session (2026-05-31).**
+> Captured by driving a signed-in evite.com tab (Claude-in-Chrome) + in-page
+> `fetch`. All five read endpoints and the auth model are confirmed against real
+> responses. The write endpoints' resource locations are known; their exact
+> request payloads need a compose-capture (see "Writes"). Evite has no public
+> API — this is the site's own internal `/services/` layer.
 
-## Confirmed
+## Path conventions (important)
+- **List** of your events: **`/services/events/v1/`** (plural `events`).
+- **Single-event** sub-resources: **`/services/event/v1/{id}/…`** (singular `event`).
+  (Guessing the plural form for sub-resources returns the SPA HTML, not JSON.)
+- REST, JSON. Trailing slash tolerated.
 
-### Transport / infra
-- REST API under `https://www.evite.com/services/…/v{N}/`. JSON responses.
-- **Cloudflare in front** (`/cdn-cgi/rum`) — relevant to the tier-3 bot-wall
-  transport escalation. (No bot-wall hit on plain `fetch` with session cookies
-  during the spike.)
-- Frontend is a MobX SPA served from `g0.evitecdn.com`; most pages are
-  **server-rendered**, so navigating doesn't always fire an XHR — client-side
-  filter toggles do.
+## Auth (Plan 2 tiers 1–2)
+- Session cookies: **`x-evite-session`** + **`evtsession`** (+ `x-evite-features`).
+  These are what the fetchproxy bootstrap declares / a headless form-login captures.
+- **CSRF** (writes): cookie **`csrftoken`** (also exposed as `window.fetchproxyCsrf`
+  — Evite's internal name, unrelated to our `@fetchproxy`).
+- **Cloudflare** in front (`/cdn-cgi/rum`); plain `fetch` with session cookies was
+  NOT bot-walled during the spike (tier-3 transport stays a fallback).
+- Frontend is a MobX SPA off `g0.evitecdn.com`; pages are server-rendered, so the
+  data endpoints are best called directly (as the tools will) rather than scraped.
 
-### Auth (drives Plan 2 tiers 1–2)
-- Session is carried by cookies **`x-evite-session`** and **`evtsession`**
-  (plus `x-evite-features` for flags). These are the cookies the fetchproxy
-  bootstrap must declare, and what a headless form-login must capture.
-- **CSRF** for writes: cookie **`csrftoken`**; the SPA also exposes the token as
-  `window[window.DATASET_KEY]` where `DATASET_KEY === "fetchproxyCsrf"` (Evite's
-  own internal name — unrelated to our `@fetchproxy`). Write requests will need
-  the `csrftoken` value as a header/body field (exact header TBD with a write
-  capture).
-- `client_data` (a page global) carries `session_id`, `email`, and hashed
-  `evc_*` values — context, not the raw session.
+## Read endpoints (all confirmed)
 
-### Events list — `GET /services/events/v1/` (fully captured)
-Query params:
-- `filterBy` = `all` | `host` | `others` (**`others` = events where you're a guest**)
-- `status` = repeatable: `upcoming` | `draft` | `archived` | `past` | `canceled`
-- `type` = `invitation`
-- `offset`, `numResults` = pagination; `filter` = free-text search
+### 1. List events — `GET /services/events/v1/`
+Query: `filterBy` = `all|host|others` (**others = you're a guest**); `status`
+(repeatable) = `upcoming|draft|archived|past|canceled`; `type=invitation`;
+`offset`, `numResults`; `filter` (free text).
+→ `{ events: Event[], totals }`. `totals` = `{ all, sending, draft, received,
+canceled, past, upcoming, archived }` (sending=hosting, received=invited).
+`Event`: `event_id, title, start, end, status, past, is_host, rsvp(yes|no|maybe),
+guest_status(0|1|2), guest_id, host_id, host_name, location{location_name,
+street_address, unit_num, city, state, zip_code, place_id}, timezone,
+known_timezone_name, template_name, event_category, rsvp_off, is_invite,
+is_pending_cohost, rendered_image_url, updated`. Fixture: `tests/fixtures/events-list.json`.
 
-Response: `{ events: Event[], totals: {...} }`.
-- `totals` = `{ all, sending, draft, received, canceled, past, upcoming, archived }`
-  (counts; `sending` = events you host, `received` = events you're invited to).
-- `Event` fields (see `tests/fixtures/events-list.json` for the full scrubbed shape):
-  `event_id`, `title`, `start`, `end`, `status`, `past`, `is_host`,
-  `rsvp` (string: `yes`|`no`|`maybe`), `guest_status` (number 0/1/2),
-  `guest_id`, `host_id`, `host_name`, `location` (object: `location_name`,
-  `street_address`, `unit_num`, `city`, `state`, `zip_code`, `place_id`),
-  `timezone`, `known_timezone_name`, `template_name`, `event_category`,
-  `rsvp_off`, `is_invite`, `is_pending_cohost`, `rendered_image_url`, `updated`.
+### 2. Event detail — `GET /services/event/v1/{id}`
+→ top keys: `event, calculatedFields, design, location, userEventContext,
+attributes, registries, settings, charity, gifting, rendered, calendar, features`.
+- `event`: `id, title, message, startDatetime, endDatetime, knownTimezoneName,
+  knownTimezoneAbbreviation, eventHostName, eventPhoneNumber, hostId, hostIds,
+  status, isPast, eventType, category, superCategory, templateName, origin,
+  isFabricPremium, shareableLink, sendOn`.
+- `settings`: `enableMaybe, privateGuestList, headCountByFamily, plusOne,
+  maxEventCapacity, allowViewMap, showGifting, rsvpBy, strictRsvpBy,
+  enableHostPhotoGallery, enablePhotoSharing, allowGuestNumber, rsvpOff`.
 
-### Page routes (for context / cross-checking)
-- Events dashboard (the `my-events` list): `GET /my-events?filterBy=…&status=…&type=invitation`
-- Guest-facing event page: `/event/{event_id}` (tabs: **Event**, **Messages**)
-- Host management dashboard: `/event/{event_id}/dashboard` — surfaces
-  **Send message**, **Export guest list**, **Duplicate event**, **View event**.
+### 3. Guests + RSVP summary — `GET /services/event/v1/{id}/guests/`
+→ `{ guests: Guest[], summary }`.
+- `Guest`: `guestId, userId, name, email, phone, guestType(host|cohost|guest),
+  rsvpResponse(yes|no|maybe|noreply), numberOfAdults, numberOfKids, checkedIn,
+  comments, deliveryStatus(delivered|…), inviteMethod(email|null), invitedBy,
+  sentOn, timesViewed, avatarUrl, shortLink, longLink, created, updated`.
+- `summary`: `{ yes, no, maybe, noReply, adultsYes, kidsYes, adultsMaybe,
+  kidsMaybe, inviteesYes, inviteesMaybe, lockedStatus }` — this powers
+  `evite_rsvp_summary`. Fixture: `tests/fixtures/event-guests.json`.
 
-## Still to capture (next spike pass — see issue #1)
+### 4. Messages — `GET /services/event/v1/{id}/posts/`
+→ `{ posts: Post[] }` (the event's "Messages" tab; host/guest message thread).
 
-The guest-list, messages, and all write endpoints render server-side or fire
-from the bundle, so their exact `/services/` paths weren't observed (guessed
-paths fall through to the SPA HTML, not JSON). To finish:
-1. On `/event/{id}/dashboard`, open the **guest list / RSVP tracker** section and
-   read the XHR that loads guests → the guest-list endpoint + guest object shape.
-2. Click into **Messages** and **Send message** (compose, do NOT send) → the
-   messages list + send endpoints, and confirm the CSRF header name on the POST.
-3. RSVP: on a guest event, open the RSVP control → capture the RSVP POST
-   (status values, guest count, note fields, CSRF).
-4. Create/edit: walk the create wizard one step (don't submit) → capture the
-   POST shape (likely multi-step).
+## Writes (resource locations known; capture payloads when implementing)
+All POST/PUT with the **`csrftoken`** value as the CSRF header/field (exact header
+TBD from one compose-capture — compose, inspect the request, do NOT submit):
+- **RSVP** — mutates a guest's response; target is the guest resource under
+  `/services/event/v1/{id}/guests/…` (likely `POST`/`PUT` with
+  `rsvpResponse`, `numberOfAdults`, `numberOfKids`, optional comment).
+- **Send message** — `POST /services/event/v1/{id}/posts/` (the messages thread).
+- **Create / edit event** — under `/services/event/v1/…`; create is likely
+  multi-step (the site's create wizard). Capture by walking one wizard step.
 
-Record each as a scrubbed fixture and fill the tables here.
+## Resolved spec Open Questions
+- REST not GraphQL; base `/services/`, `events` (list) vs `event` (single).
+- Session cookies `x-evite-session`/`evtsession`; CSRF `csrftoken`.
+- Bot-wall: Cloudflare, not tripped by plain `fetch`.
+- Pagination: `offset`+`numResults` with a `totals` breakdown.
+- Single session observed → a multi-account registry is NOT needed for v1.
 
-## Resolved Open Questions (from the spec)
-- **REST vs GraphQL:** REST (`/services/{resource}/v{N}/`).
-- **Session cookie names:** `x-evite-session`, `evtsession`.
-- **CSRF:** yes — `csrftoken` cookie (+ `window.fetchproxyCsrf`).
-- **Bot-wall vendor:** Cloudflare (not tripped by plain `fetch` in the spike).
-- **Pagination:** `offset` + `numResults`, with a `totals` breakdown object.
-
-## Still open (need the captures above)
-- Guest-list / messages / RSVP / event-create endpoint paths + payloads.
-- Whether event-create is single-call or multi-step.
-- Whether a multi-account session registry is warranted (single session observed).
+## Remaining (small) — see issue #1
+Capture the exact write payloads (RSVP, send-message POST, create-event wizard)
+by composing-but-not-submitting, and record as fixtures. All reads are done.

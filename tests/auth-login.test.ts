@@ -6,21 +6,28 @@ import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
 // A minimal `Response`-like stub good enough for loginWithPassword: it needs
 // `ok`, `status`, and `headers.getSetCookie()`. We never hit the network — a
 // fake fetch is injected.
-function fakeResponse(opts: {
-  ok: boolean;
-  status: number;
-  setCookies?: string[];
-  json?: unknown;
-}): Response {
+function fakeResponse(opts: { ok: boolean; status: number; setCookies?: string[] }): Response {
   const setCookies = opts.setCookies ?? [];
   return {
     ok: opts.ok,
     status: opts.status,
-    headers: {
-      getSetCookie: () => setCookies,
-    },
-    json: async () => opts.json ?? {},
+    headers: { getSetCookie: () => setCookies },
+    json: async () => ({}),
   } as unknown as Response;
+}
+
+// loginWithPassword now makes TWO calls: a priming GET (must yield a csrftoken
+// cookie) then the login POST. This helper returns the prime cookies on GET and
+// the given login response on POST.
+function twoPhase(opts: {
+  primeCookies?: string[];
+  login: { ok: boolean; status: number; setCookies?: string[] };
+}) {
+  const primeCookies = opts.primeCookies ?? ['csrftoken=prime-csrf; Path=/; Secure'];
+  return vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    if (init?.method === 'POST') return fakeResponse(opts.login);
+    return fakeResponse({ ok: true, status: 200, setCookies: primeCookies });
+  });
 }
 
 const SET_COOKIES = [
@@ -33,63 +40,77 @@ const SET_COOKIES = [
 ];
 
 describe('loginWithPassword', () => {
-  it('POSTs JSON {email,password} to https://www.evite.com/ajax_login', async () => {
-    const fetchImpl = vi.fn(async () =>
-      fakeResponse({ ok: true, status: 200, setCookies: SET_COOKIES }),
-    );
+  it('primes with a GET then POSTs JSON {email,password} to /ajax_login with CSRF + Origin', async () => {
+    const fetchImpl = twoPhase({ login: { ok: true, status: 200, setCookies: SET_COOKIES } });
 
     await loginWithPassword('user@example.com', 'hunter2', fetchImpl);
 
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    // Call 0: the priming GET to the homepage.
+    const [primeUrl, primeInit] = fetchImpl.mock.calls[0]!;
+    expect(primeUrl).toBe('https://www.evite.com/');
+    expect(primeInit?.method ?? 'GET').toBe('GET');
+    // Call 1: the login POST, with the CSRF header (matching the primed cookie),
+    // the cookie jar, and an Origin header.
+    const [url, init] = fetchImpl.mock.calls[1]!;
     expect(url).toBe('https://www.evite.com/ajax_login');
     expect(init?.method).toBe('POST');
     const headers = init?.headers as Record<string, string>;
     expect(headers['Content-Type'] ?? headers['content-type']).toContain('application/json');
+    expect(headers['X-CSRFToken']).toBe('prime-csrf');
+    expect(headers['Origin']).toBe('https://www.evite.com');
+    expect(headers['Cookie']).toContain('csrftoken=prime-csrf');
     expect(JSON.parse(init?.body as string)).toEqual({
       email: 'user@example.com',
       password: 'hunter2',
     });
   });
 
-  it('parses Set-Cookie into a cookie header with exactly the four session cookies', async () => {
-    const fetchImpl = vi.fn(async () =>
-      fakeResponse({ ok: true, status: 200, setCookies: SET_COOKIES }),
-    );
-
+  it('parses the login Set-Cookie into a header with exactly the four session cookies', async () => {
+    const fetchImpl = twoPhase({ login: { ok: true, status: 200, setCookies: SET_COOKIES } });
     const result = await loginWithPassword('user@example.com', 'pw', fetchImpl);
 
     expect(result.cookieHeader).toContain('x-evite-session=sess-abc');
     expect(result.cookieHeader).toContain('evtsession=evt-def');
     expect(result.cookieHeader).toContain('csrftoken=csrf-ghi');
     expect(result.cookieHeader).toContain('x-evite-features=feat-jkl');
-    // The unrelated cookie is dropped.
     expect(result.cookieHeader).not.toContain('cf_clearance');
   });
 
-  it('surfaces the csrftoken as csrfToken', async () => {
-    const fetchImpl = vi.fn(async () =>
-      fakeResponse({ ok: true, status: 200, setCookies: SET_COOKIES }),
-    );
+  it('surfaces the (rotated) login csrftoken as csrfToken', async () => {
+    const fetchImpl = twoPhase({ login: { ok: true, status: 200, setCookies: SET_COOKIES } });
     const result = await loginWithPassword('user@example.com', 'pw', fetchImpl);
     expect(result.csrfToken).toBe('csrf-ghi');
   });
 
   it('resolves on just the core session pair (optional cookies absent)', async () => {
-    const fetchImpl = vi.fn(async () =>
-      fakeResponse({
+    const fetchImpl = twoPhase({
+      login: {
         ok: true,
         status: 200,
         setCookies: ['x-evite-session=s; Path=/', 'evtsession=e; Path=/'],
-      }),
-    );
+      },
+    });
     const result = await loginWithPassword('user@example.com', 'pw', fetchImpl);
     expect(result.cookieHeader).toBe('x-evite-session=s; evtsession=e');
     expect(result.csrfToken).toBeUndefined();
   });
 
+  it('throws SessionNotAuthenticatedError when the prime yields no csrftoken', async () => {
+    // Prime returns no csrftoken → cannot satisfy the CSRF check → bail before POST.
+    const fetchImpl = twoPhase({
+      primeCookies: ['x-evite-features=f; Path=/'],
+      login: { ok: true, status: 200, setCookies: SET_COOKIES },
+    });
+    await expect(
+      loginWithPassword('user@example.com', 'pw', fetchImpl),
+    ).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+    // The login POST must never be attempted without a CSRF token.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('throws SessionNotAuthenticatedError on a 401 (bad creds) without echoing the password', async () => {
-    const fetchImpl = vi.fn(async () => fakeResponse({ ok: false, status: 401 }));
+    const fetchImpl = twoPhase({ login: { ok: false, status: 401 } });
 
     let thrown: unknown;
     try {
@@ -98,38 +119,38 @@ describe('loginWithPassword', () => {
       thrown = e;
     }
     expect(thrown).toBeInstanceOf(SessionNotAuthenticatedError);
-    // The password must never appear in the error message or hint.
     const err = thrown as Error & { hint?: string };
     expect(err.message).not.toContain('super-secret-pw');
     expect(err.hint ?? '').not.toContain('super-secret-pw');
-    // The hint points the user at the credential env vars.
     expect((err.hint ?? '') + err.message).toMatch(/EVITE_EMAIL|EVITE_PASSWORD/);
   });
 
   it('throws SessionNotAuthenticatedError when a 200 carries no session cookies', async () => {
-    const fetchImpl = vi.fn(async () =>
-      fakeResponse({ ok: true, status: 200, setCookies: ['cf_clearance=x; Path=/'] }),
-    );
+    const fetchImpl = twoPhase({
+      login: { ok: true, status: 200, setCookies: ['cf_clearance=x; Path=/'] },
+    });
     await expect(
       loginWithPassword('user@example.com', 'pw', fetchImpl),
     ).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
 
   it('falls back to the set-cookie header when getSetCookie is unavailable', async () => {
-    // Simulate a runtime whose Headers lacks getSetCookie: expose a single
-    // joined `set-cookie` header via `.get()` instead.
-    const response = {
-      ok: true,
-      status: 200,
-      headers: {
-        get: (name: string) =>
-          name.toLowerCase() === 'set-cookie'
-            ? 'x-evite-session=s; Path=/, evtsession=e; Path=/, csrftoken=c; Path=/'
-            : null,
-      },
-      json: async () => ({}),
-    } as unknown as Response;
-    const fetchImpl = vi.fn(async () => response);
+    // Simulate a runtime whose Headers lacks getSetCookie: expose a single joined
+    // `set-cookie` header via `.get()` instead. Used for BOTH prime and login.
+    const joined = (value: string) =>
+      ({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (name: string) => (name.toLowerCase() === 'set-cookie' ? value : null),
+        },
+        json: async () => ({}),
+      }) as unknown as Response;
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? joined('x-evite-session=s; Path=/, evtsession=e; Path=/, csrftoken=c; Path=/')
+        : joined('csrftoken=prime; Path=/'),
+    );
 
     const result = await loginWithPassword('user@example.com', 'pw', fetchImpl);
     expect(result.cookieHeader).toContain('x-evite-session=s');

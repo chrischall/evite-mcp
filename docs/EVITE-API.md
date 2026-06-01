@@ -19,16 +19,26 @@
 - **CSRF** (writes): cookie **`csrftoken`** (also exposed as `window.fetchproxyCsrf`
   — Evite's internal name, unrelated to our `@fetchproxy`).
 
-### Tier-1 email/password login — CAPTURED (2026-06-01)
-- **`POST https://www.evite.com/ajax_login`**, JSON body `{ "email", "password" }`
-  (no CSRF token required on the login request itself).
-- On 200 the response **sets the session cookies** (`x-evite-session`,
+### Tier-1 email/password login — CAPTURED (2026-06-01); CSRF-priming CORRECTED (2026-06-02)
+- **`POST https://www.evite.com/ajax_login`**, JSON body `{ "email", "password" }`.
+- ⚠️ **CSRF-protected (Django).** A cold POST is rejected with
+  `403 {"error":"HTTP_403"}`. A working login needs (verified by probe):
+  1. a priming **`GET https://www.evite.com/`** → sets the `csrftoken` cookie (+
+     anonymous `x-evite-session`/`evtsession`/`x-evite-features`/`psid…`);
+  2. the POST carrying **that full cookie jar back**, an **`X-CSRFToken`** header
+     matching the `csrftoken` cookie, and an **`Origin: https://www.evite.com`**
+     header (Django's HTTPS Origin/Referer check). With all three, bad creds →
+     `401 "Invalid Email Address / Password"`; missing any → `403`.
+  (The earlier "no CSRF on login" note was WRONG — the original capture was from a
+  signed-in browser that already held the cookie and sent the header automatically.)
+- On 200 the response **sets the authenticated session cookies** (`x-evite-session`,
   `evtsession`, `csrftoken`, `x-evite-features`) via `Set-Cookie`, and returns a
   JSON body: `{ full_name, first_name, initials, user_id, email, image_url,
   avatar_disk, subscription_plan_name, token }`. The `token` + the cookies are
   the session.
-- Headless flow: POST creds → keep the `Set-Cookie` jar → send those cookies on
-  every subsequent `/services/…` call (same cookie-session path tier-2 produces).
+- Headless flow: GET to prime CSRF → POST creds with jar+X-CSRFToken+Origin → keep
+  the login `Set-Cookie` jar → send those cookies on every subsequent `/services/…`
+  call (same cookie-session path tier-2 produces).
   (`Continue with Google`/`Apple` are a separate OAuth flow — out of scope for
   tier-1; tier-1 is the email/password form only.)
 - **Cloudflare** in front (`/cdn-cgi/rum`); plain `fetch` with session cookies was

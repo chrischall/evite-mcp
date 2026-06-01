@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/chrischall/evite-mcp/compare/v0.2.0...v0.2.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* tier-1 login was missing CSRF priming (cold POST 403s) ([#16](https://github.com/chrischall/evite-mcp/issues/16)) ([f534642](https://github.com/chrischall/evite-mcp/commit/f534642f30b855bf80b46452f8f5191284905389))
+
 ## [0.2.0](https://github.com/chrischall/evite-mcp/compare/v0.1.0...v0.2.0) (2026-06-01)
 
 

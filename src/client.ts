@@ -14,18 +14,15 @@ const BASE_URL = 'https://www.evite.com';
 /**
  * The request header carrying the CSRF token on writes.
  *
- * Evite's frontend exposes the token as the `csrftoken` cookie (and
- * `window.fetchproxyCsrf`); the exact header NAME it echoes back on mutating
- * requests was never captured (capturing it needs a real compose-and-submit,
- * which the live-capture session could not exercise — see issue #3).
+ * VERIFIED (live probe 2026-06-01): `X-CSRFToken` is correct — a constructed
+ * `POST /services/event/v1/{id}/actions/cancel/` returned 202 with this header
+ * carrying the current `csrftoken` cookie value. (`csrftoken` is Django's
+ * default CSRF cookie; `X-CSRFToken` its default header.)
  *
- * Best-informed assumption: `csrftoken` is Django's default CSRF *cookie* name
- * (`CSRF_COOKIE_NAME`), so Django's default CSRF *header* `X-CSRFToken`
- * (`CSRF_HEADER_NAME = HTTP_X_CSRFTOKEN`) is the strongly-indicated header.
- *
- * TODO(verify): confirm CSRF header name with a live write capture (issue #3).
- * Centralized here so flipping it to whatever the capture reveals (e.g.
- * `X-CSRF-Token`, or moving it into the body as a field) is a one-line change.
+ * IMPORTANT — the `csrftoken` cookie ROTATES within a session: a request with a
+ * stale token 403s, a re-read fresh token succeeds. So the token value must be
+ * read from the cookie jar fresh per request (the resolver re-reads it), not
+ * cached. The header NAME is stable; only the value rotates.
  */
 export const CSRF_HEADER = 'X-CSRFToken';
 

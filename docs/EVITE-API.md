@@ -75,10 +75,11 @@ attributes, registries, settings, charity, gifting, rendered, calendar, features
 → `{ posts: Post[] }` (the event's "Messages" tab; host/guest message thread).
 
 ## Writes — convention VERIFIED, most payloads still ASSUMED
-All mutations carry the **`csrftoken`** cookie value as a CSRF header. Assumed
-header: **`X-CSRFToken`** — `csrftoken` is Django's default CSRF *cookie* name,
-so Django's default header `X-CSRFToken` is strongly indicated (centralized as
-`CSRF_HEADER` in `src/client.ts`).
+All mutations carry the **`csrftoken`** cookie value in the **`X-CSRFToken`**
+header — **VERIFIED** (live probe 2026-06-01): a constructed
+`POST /services/event/v1/{id}/actions/cancel/` returned `202` with this header.
+⚠️ The `csrftoken` cookie **ROTATES mid-session** — a stale value `403`s, a
+freshly-read value succeeds. Read the cookie fresh per request (don't cache).
 
 ### TWO write API surfaces (live capture 2026-06-01)
 Evite splits writes across two bases — this matters for every write tool:
@@ -90,20 +91,33 @@ body) → `202`, captured twice (delete-draft + cancel-event). Implemented as th
 VERIFIED `EviteClient.cancelEvent()`.
 
 **2. `/ajax/event/{id}/…`** — the legacy "ajax" API behind the create→guest→send
-("Fabric") flow. VERIFIED endpoints:
-- **Add guest**: `POST /ajax/event/{id}/guestlist/draft/` → `200` (captured live —
-  added a guest to a throwaway event).
+("Fabric") flow.
+- **Add guest**: `POST /ajax/event/{id}/guestlist/draft/`. **Body partially
+  reverse-engineered (active probe 2026-06-01):** a **top-level JSON array** of
+  guest objects (`Content-Type: application/json`). The server does
+  `for g in payload: DraftGuest(**g)` — proven by the `500` error
+  *"DraftGuest() argument after ** must be a mapping, not str"* when a dict (whose
+  iteration yields key strings) or form-encoded body was sent. `name`/`email` are
+  *accepted* `DraftGuest` kwargs (no "unexpected keyword" error) but were
+  **insufficient to persist** (200, but the guest didn't land — `DraftGuest` takes
+  kwargs leniently). The exact persisting field set is still TBD: capture the
+  stored guest shape via a real-pointer UI add (DOM `.click()` doesn't fire the
+  React Save handler) then match it.
 - Guest list (draft): `GET /ajax/event/{id}/guestlist/draft/?q=&search_by=all&search_type=contains&sort_by=&reverse=false&per_page=5000`
+  → `{already_sent, guests:{page,current_page,has_next,count,num_pages}, letters, total_drafts, data_layer}`.
 - Guest list (sent): `GET /ajax/event/{id}/guestlist/sent/?…&per_page=25&page=1`
 - Contacts/import: `GET /ajax/event/{id}/guestlist/import/`, `…/guestlist/contacts`
 
-So **guest/RSVP/send writes live under `/ajax/event/{id}/…`**, while host lifecycle
-actions (cancel/reinstate) live under `/services/…/actions/`. The event-detail
-create/save itself goes through the Fabric editor's own (separate) API.
+So **guest/RSVP/send writes live under `/ajax/event/{id}/…`** (JSON arrays,
+`X-CSRFToken`), while host lifecycle actions (cancel/reinstate) live under
+`/services/…/actions/`. The event-detail create/save goes through the Fabric
+editor's own (separate) API.
 
-> ⚠️ Request *bodies* for the `/ajax/` and Fabric writes are NOT yet captured —
-> `read_network_requests` exposes method+url+status but not the body, and the
-> in-page hook sees nothing (SPA fetch-closure). Endpoints are known; bodies pending.
+> ⚠️ Remaining: the exact `DraftGuest` *persisting* fields (name/email accepted but
+> didn't persist) and the **RSVP** endpoint+body (not reached — needs a guest on a
+> finalized event). `read_network_requests` exposes method+url+status but NOT the
+> request body, so bodies must be reverse-engineered via probe responses (as above)
+> or captured from the stored resource shape.
 
 ### Web routes (verified)
 - Guest/event view: **`/event/{ID}`** (`evite.me/<short>` redirects here).

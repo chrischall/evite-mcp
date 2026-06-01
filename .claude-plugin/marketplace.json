@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Evite tools for Claude Code",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
@@ -14,7 +14,7 @@
       "displayName": "Evite",
       "source": "./",
       "description": "Evite tools for Claude — list events, guest lists & RSVPs, RSVP, message guests, and create/edit events via MCP",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "Chris Chall"
       },

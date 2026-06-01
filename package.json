@@ -2,7 +2,7 @@
   "name": "evite-mcp",
   "version": "0.1.0",
   "mcpName": "io.github.chrischall/evite-mcp",
-  "description": "Evite MCP server — scaffold; auth and event tools land in later plans.",
+  "description": "Evite MCP server for Claude — list events, guest lists & RSVPs, RSVP, message guests, and create/edit events.",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",

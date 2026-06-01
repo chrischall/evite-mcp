@@ -1,0 +1,21 @@
+{
+  "name": "evite",
+  "displayName": "Evite",
+  "version": "0.1.0",
+  "description": "Evite tools for Claude — list events, guest lists & RSVPs, RSVP, message guests, and create/edit events via MCP",
+  "author": {
+    "name": "Chris Chall"
+  },
+  "homepage": "https://github.com/chrischall/evite-mcp",
+  "repository": "https://github.com/chrischall/evite-mcp",
+  "license": "MIT",
+  "keywords": [
+    "evite",
+    "invitations",
+    "events",
+    "rsvp",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcp": "./.mcp.json"
+}

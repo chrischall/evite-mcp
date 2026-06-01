@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "evite": {
+      "command": "npx",
+      "args": ["-y", "evite-mcp"],
+      "env": {
+        "EVITE_EMAIL": "${EVITE_EMAIL}",
+        "EVITE_PASSWORD": "${EVITE_PASSWORD}"
+      }
+    }
+  }
+}

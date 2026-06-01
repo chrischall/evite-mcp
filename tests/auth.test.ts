@@ -36,6 +36,14 @@ function loginResponse(setCookies: string[]): Response {
   } as unknown as Response;
 }
 
+// tier-1 makes two calls: a priming GET (must yield a csrftoken) then the login
+// POST. This returns prime cookies on GET, the login cookies on POST.
+function loginFetch(loginCookies: string[], primeCookies = ['csrftoken=prime; Path=/']) {
+  return vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+    init?.method === 'POST' ? loginResponse(loginCookies) : loginResponse(primeCookies),
+  );
+}
+
 describe('resolveSession', () => {
   const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
 
@@ -58,19 +66,19 @@ describe('resolveSession', () => {
     it('prefers email/password when both env vars are set (no cookie env, no bootstrap)', async () => {
       process.env.EVITE_EMAIL = 'user@example.com';
       process.env.EVITE_PASSWORD = 'pw';
-      const fetchImpl = vi.fn(async () =>
-        loginResponse([
-          'x-evite-session=s; Path=/',
-          'evtsession=e; Path=/',
-          'csrftoken=c; Path=/',
-          'x-evite-features=f; Path=/',
-        ]),
-      );
+      const fetchImpl = loginFetch([
+        'x-evite-session=s; Path=/',
+        'evtsession=e; Path=/',
+        'csrftoken=c; Path=/',
+        'x-evite-features=f; Path=/',
+      ]);
 
       const result = await resolveSession({ fetchImpl });
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(fetchImpl.mock.calls[0]![0]).toBe('https://www.evite.com/ajax_login');
+      // Two calls: the priming GET (homepage) then the login POST.
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(fetchImpl.mock.calls[0]![0]).toBe('https://www.evite.com/');
+      expect(fetchImpl.mock.calls[1]![0]).toBe('https://www.evite.com/ajax_login');
       expect(bootstrapMock).not.toHaveBeenCalled();
       expect(result.cookieHeader).toContain('x-evite-session=s');
       expect(result.csrfToken).toBe('c');
@@ -80,13 +88,11 @@ describe('resolveSession', () => {
       process.env.EVITE_EMAIL = 'user@example.com';
       process.env.EVITE_PASSWORD = 'pw';
       process.env.EVITE_SESSION_COOKIE = 'x-evite-session=from-env';
-      const fetchImpl = vi.fn(async () =>
-        loginResponse(['x-evite-session=from-login; Path=/', 'evtsession=e; Path=/']),
-      );
+      const fetchImpl = loginFetch(['x-evite-session=from-login; Path=/', 'evtsession=e; Path=/']);
 
       const result = await resolveSession({ fetchImpl });
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(result.cookieHeader).toContain('x-evite-session=from-login');
       expect(result.cookieHeader).not.toContain('from-env');
     });

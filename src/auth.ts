@@ -78,7 +78,16 @@ function fetchproxyDisabled(env?: NodeJS.ProcessEnv): boolean {
 }
 
 function notAuthed(): never {
-  throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+  const err = new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+  // The default hint points only at the browser — but the documented default is
+  // email/password, and the browser bridge can't run in a sandboxed host (e.g. a
+  // Claude Desktop .mcpb). Steer the user to the credential env vars first.
+  (err as { hint?: string }).hint =
+    'No Evite session. Set EVITE_EMAIL + EVITE_PASSWORD (recommended), or ' +
+    'EVITE_SESSION_COOKIE (a raw cookie header from a signed-in evite.com tab). ' +
+    'The browser-bridge fallback needs both a signed-in evite.com tab and a ' +
+    'reachable fetchproxy bridge (unavailable in sandboxed hosts).';
+  throw err;
 }
 
 /**

@@ -143,14 +143,20 @@ event-detail create/save goes through the Fabric editor's own (separate) API.
   `title`, `date` (`YYYY-MM-DD`, hidden) + time, `location`, `host`, `phone`,
   `event_option_max_guests`, plus gifting/signup-list fields and a custom `question`.
 
-### Still UNVERIFIED (issue #3) — the two broadcast writes
-- **Send invitation** ("Send now") — `/ajax/event/{id}/…` (the `guestlist/sent/`
-  list is what it populates); exact send endpoint + body pending. Needs UI capture.
-- **Send message** (host→guests) — NOT `/posts/` (GET-only, `405`) and not any
-  `/actions/<verb>/` (all `404`). Capture from the dashboard "Send message" UI.
+### Broadcast writes — VERIFIED (live capture 2026-06-01, blackholed guest only)
+Captured by actually broadcasting on a throwaway whose only recipient was a
+blackholed `@example.com` address, using a `PerformanceObserver`→`localStorage`
+(it sees the SPA's requests the fetch-closure hides AND survives the navigation
+that cleared `read_network_requests`):
+- **Send invitation** ("Send now") — **`POST /services/event/v1/{id}/send/`** (sends
+  the ready-to-send draft guests). Body assumed empty; only the endpoint captured.
+- **Send message** (host→guest) — **`POST /tsunami/v1/services/event/{id}/guest/{gid}/messages`**
+  — a THIRD base, the `/tsunami/` messaging service (NOT `/posts/`, which is GET-only).
+  Per-guest private message; body assumed `{message}` (only endpoint captured).
 
-Both actually broadcast (to guests), so verifying them means a real send — do it on
-a throwaway whose only guest is a blackholed `@example.com` address.
+> ALL 9 writes are now endpoint-verified. Remaining nicety (issue #3): the exact
+> request *bodies* for `send`/`sendMessage` (the URL-only observer can't see them)
+> and `createEvent`'s `templateName` value (it creates a draft but 500s on success).
 
 > The original assumption that create/update used a separate "Fabric" API was
 > WRONG — they're plain `/services/event/v1/` calls (create = POST to the

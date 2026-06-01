@@ -217,17 +217,18 @@ export class EviteClient {
   // (VERIFIED). The cookie ROTATES mid-session — the resolver must read it fresh
   // per request (a stale value 403s).
   //
-  // VERIFIED endpoints (live probe 2026-06-01):
-  //  - {@link rsvp}           PUT  /services/event/v1/{id}/guests/{guestId}     → 200
-  //  - {@link cancelEvent}    POST /services/event/v1/{id}/actions/cancel/      → 202
-  //  - {@link reinstateEvent} POST /services/event/v1/{id}/actions/reinstate/   → 202
-  //  - add-guest              POST /ajax/event/{id}/guestlist/draft/  body `[{name,email}]` → persists
-  // The `/services/…/actions/{verb}/` and `/ajax/event/{id}/…` bases are distinct;
-  // guest/RSVP live on /services, the create→guest→send "Fabric" flow on /ajax.
-  //
-  // STILL UNVERIFIED: {@link sendMessage} (posts location is read-confirmed but the
-  // write body isn't) and {@link createEvent}/{@link updateEvent} (the Fabric editor
-  // posts to its own API). See issue #3 + docs/EVITE-API.md.
+  // VERIFIED endpoints (live probe 2026-06-01) — across THREE bases:
+  //  - {@link rsvp}            PUT  /services/event/v1/{id}/guests/{guestId}        → 200
+  //  - {@link createEvent}     POST /services/event/v1/           body {event:{…}}  → creates (500-on-success)
+  //  - {@link updateEvent}     PATCH /services/event/v1/{id}      body {event:{…}}  → 200
+  //  - {@link sendInvitation}  POST /services/event/v1/{id}/send/                   → sends drafts
+  //  - {@link cancelEvent}     POST /services/event/v1/{id}/actions/cancel/         → 202
+  //  - {@link reinstateEvent}  POST /services/event/v1/{id}/actions/reinstate/      → 202
+  //  - add-guest               POST /ajax/event/{id}/guestlist/draft/  body [{name,email}]
+  //  - {@link sendMessage}     POST /tsunami/v1/services/event/{id}/guest/{gid}/messages
+  // Three bases: REST `/services/…`, legacy `/ajax/event/{id}/…` (guest list), and
+  // the `/tsunami/…` messaging service. Body fields for send/sendMessage are
+  // assumed (only endpoints captured — observer gives URL, not body); see issue #3.
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
@@ -289,16 +290,37 @@ export class EviteClient {
   }
 
   /**
-   * Post a message to the event's Messages thread —
-   * `POST /services/event/v1/{id}/posts/`.
+   * Send a private host→guest message —
+   * **`POST /tsunami/v1/services/event/{eventId}/guest/{guestId}/messages`**.
    *
-   * UNVERIFIED payload — see issue #3. The endpoint is the confirmed READ posts
-   * location; the write body (`{ message }`) is unconfirmed.
+   * VERIFIED endpoint (live probe 2026-06-01): the host "Send message" flow hits
+   * this `/tsunami/` messaging service per guest — NOT `/services/…/posts/` (which
+   * is GET-only, `405` on writes). Body assumed `{ message }` (the send fired this
+   * endpoint; the exact body field wasn't captured — issue #3).
    */
-  async sendMessage(eventId: string, input: SendMessageInput): Promise<unknown> {
-    return this.write('POST', `/services/event/v1/${encodeURIComponent(eventId)}/posts/`, {
-      message: input.message,
-    });
+  async sendMessage(
+    eventId: string,
+    guestId: string,
+    input: SendMessageInput,
+  ): Promise<unknown> {
+    return this.write(
+      'POST',
+      `/tsunami/v1/services/event/${encodeURIComponent(eventId)}/guest/${encodeURIComponent(guestId)}/messages`,
+      { message: input.message },
+    );
+  }
+
+  /**
+   * Send the invitation ("Send now") to the event's ready-to-send (draft) guests —
+   * **`POST /services/event/v1/{id}/send/`**.
+   *
+   * VERIFIED endpoint (live probe 2026-06-01): "Send now" fired exactly this path
+   * before delivering to the draft guests. Body assumed empty (it sends whatever
+   * is in the draft guest list); the exact body wasn't captured — issue #3.
+   * NOTE: this actually emails guests — keep it strictly confirm-gated.
+   */
+  async sendInvitation(eventId: string): Promise<unknown> {
+    return this.write('POST', `/services/event/v1/${encodeURIComponent(eventId)}/send/`, {});
   }
 
   /**

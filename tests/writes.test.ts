@@ -120,6 +120,7 @@ describe('evite_send_message', () => {
     const h = await harnessFor(client);
     const res = await h.callTool('evite_send_message', {
       event_id: 'EVENTID0',
+      guest_id: 'GUEST9',
       message: 'hello all',
     });
     expect(client.sendMessage).not.toHaveBeenCalled();
@@ -136,10 +137,13 @@ describe('evite_send_message', () => {
     const h = await harnessFor(client);
     await h.callTool('evite_send_message', {
       event_id: 'EVENTID0',
+      guest_id: 'GUEST9',
       message: 'hello all',
       confirm: true,
     });
-    expect(client.sendMessage).toHaveBeenCalledWith('EVENTID0', { message: 'hello all' });
+    expect(client.sendMessage).toHaveBeenCalledWith('EVENTID0', 'GUEST9', {
+      message: 'hello all',
+    });
     await h.close();
   });
 });

@@ -86,15 +86,18 @@ describe('EviteClient — rsvp', () => {
   });
 });
 
-describe('EviteClient — sendMessage', () => {
-  it('POSTs /posts/ with the message and CSRF header', async () => {
+describe('EviteClient — sendMessage (VERIFIED endpoint)', () => {
+  it('POSTs the /tsunami/ per-guest messages endpoint with the message', async () => {
     const spy = mockFetch({ body: { ok: true } });
     const client = newClient();
-    await client.sendMessage('EVENTID0', { message: 'hello all' });
+    await client.sendMessage('EVENTID0', 'GUEST9', { message: 'hello all' });
 
     const url = spy.mock.calls[0]![0] as string;
     const init = spy.mock.calls[0]![1] as RequestInit;
-    expect(url).toBe('https://www.evite.com/services/event/v1/EVENTID0/posts/');
+    // Verified live: host "Send message" hits the /tsunami/ messaging service per guest.
+    expect(url).toBe(
+      'https://www.evite.com/tsunami/v1/services/event/EVENTID0/guest/GUEST9/messages',
+    );
     expect(init.method).toBe('POST');
     expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
     expect(bodyOf(spy).message).toBe('hello all');
@@ -179,7 +182,7 @@ describe('EviteClient — CSRF presence', () => {
     const spy = mockFetch({ body: {} }, { body: {} }, { body: {} }, { body: {} });
     const client = newClient();
     await client.rsvp('E', 'G', { response: 'maybe', numberOfAdults: 1, numberOfKids: 0 });
-    await client.sendMessage('E', { message: 'x' });
+    await client.sendMessage('E', 'G', { message: 'x' });
     await client.createEvent({ title: 't' });
     await client.updateEvent('E', { title: 't' });
     for (let n = 0; n < 4; n++) {
@@ -190,7 +193,7 @@ describe('EviteClient — CSRF presence', () => {
   it('still sends the write when no CSRF token resolved (header simply absent)', async () => {
     const spy = mockFetch({ body: {} });
     const client = newClient({ cookieHeader: 'x-evite-session=s; evtsession=e' });
-    await client.sendMessage('E', { message: 'x' });
+    await client.sendMessage('E', 'G', { message: 'x' });
     const headers = headersOf(spy);
     expect(headers[CSRF_HEADER]).toBeUndefined();
     expect(headers.cookie).toBe('x-evite-session=s; evtsession=e');

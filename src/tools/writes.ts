@@ -46,7 +46,8 @@ const rsvpArgs = z.object({
 
 const sendMessageArgs = z.object({
   event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
-  message: z.string().min(1).describe('Message text to post to the event Messages thread.'),
+  guest_id: z.string().min(1).describe('Guest id to message (guestId from evite_list_guests).'),
+  message: z.string().min(1).describe('Message text to send to the guest.'),
   confirm: schemaConfirm,
 });
 
@@ -113,9 +114,13 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     async (raw) => {
       const args = sendMessageArgs.parse(raw);
       if (args.confirm !== true) {
-        return preview('send_message', { event_id: args.event_id, message: args.message });
+        return preview('send_message', {
+          event_id: args.event_id,
+          guest_id: args.guest_id,
+          message: args.message,
+        });
       }
-      const data = await client.sendMessage(args.event_id, { message: args.message });
+      const data = await client.sendMessage(args.event_id, args.guest_id, { message: args.message });
       return textResult(data);
     },
   );

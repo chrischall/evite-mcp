@@ -102,34 +102,36 @@ describe('EviteClient — sendMessage', () => {
 });
 
 describe('EviteClient — createEvent', () => {
-  it('POSTs /services/event/v1/ with the input body and CSRF header', async () => {
+  it('POSTs /services/event/v1/ with the input nested under `event`', async () => {
     const spy = mockFetch({ body: { event: { id: 'NEW' } } });
     const client = newClient();
     await client.createEvent({ title: 'Pool Party', startDatetime: '2026-07-01T18:00:00' });
 
     const url = spy.mock.calls[0]![0] as string;
     const init = spy.mock.calls[0]![1] as RequestInit;
+    // Verified live: POST /services/event/v1/ with the fields wrapped in `event`.
     expect(url).toBe('https://www.evite.com/services/event/v1/');
     expect(init.method).toBe('POST');
     expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
-    const body = bodyOf(spy);
-    expect(body.title).toBe('Pool Party');
-    expect(body.startDatetime).toBe('2026-07-01T18:00:00');
+    expect(bodyOf(spy)).toEqual({
+      event: { title: 'Pool Party', startDatetime: '2026-07-01T18:00:00' },
+    });
   });
 });
 
-describe('EviteClient — updateEvent', () => {
-  it('PUTs /services/event/v1/{id} with the patch and CSRF header', async () => {
+describe('EviteClient — updateEvent (VERIFIED endpoint)', () => {
+  it('PATCHes /services/event/v1/{id} with the patch nested under `event`', async () => {
     const spy = mockFetch({ body: { event: { id: 'EVENTID0' } } });
     const client = newClient();
     await client.updateEvent('EVENTID0', { title: 'Renamed' });
 
     const url = spy.mock.calls[0]![0] as string;
     const init = spy.mock.calls[0]![1] as RequestInit;
+    // Verified live: PATCH with {event:{...}} changed the title; PUT/bare body did not.
     expect(url).toBe('https://www.evite.com/services/event/v1/EVENTID0');
-    expect(init.method).toBe('PUT');
+    expect(init.method).toBe('PATCH');
     expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
-    expect(bodyOf(spy).title).toBe('Renamed');
+    expect(bodyOf(spy)).toEqual({ event: { title: 'Renamed' } });
   });
 });
 

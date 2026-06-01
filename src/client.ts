@@ -231,13 +231,12 @@ export class EviteClient {
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
-   * Issue an authenticated mutating request (POST/PUT). The CSRF token (when the
-   * session resolved one) is attached via {@link CSRF_HEADER} — the single,
-   * centralized place that header is set, so adjusting it after a live capture
-   * is one edit. Error mapping mirrors {@link get}.
+   * Issue an authenticated mutating request (POST/PUT/PATCH). The CSRF token
+   * (when the session resolved one) is attached via {@link CSRF_HEADER} — the
+   * single, centralized place that header is set. Error mapping mirrors {@link get}.
    */
   private async write<T>(
-    method: 'POST' | 'PUT',
+    method: 'POST' | 'PUT' | 'PATCH',
     path: string,
     body: Record<string, unknown>,
   ): Promise<T> {
@@ -303,24 +302,33 @@ export class EviteClient {
   }
 
   /**
-   * Create an event — `POST /services/event/v1/`.
+   * Create an event — `POST /services/event/v1/` with the fields wrapped in an
+   * `event` envelope. Required fields (named by the API's Pydantic validation):
+   * `title`, `startDatetime`, `templateName`.
    *
-   * UNVERIFIED payload — see issue #3. NOTE: the real site flow is a multi-step
-   * create wizard; this single POST is a best-effort placeholder and will likely
-   * need to walk multiple wizard steps once captured.
+   * VERIFIED (live probe 2026-06-01) — with caveat: this request DID create a
+   * draft event (it appeared in My Events as a `draft`). BUT the API returns
+   * `500 "Unknown error"` even on that success (a secondary post-create step
+   * fails), so {@link write} will THROW despite the event existing. Until that's
+   * understood, treat a 500 from this call as "possibly created" — re-query the
+   * draft list rather than retrying blindly. See issue #3.
    */
   async createEvent(input: CreateEventInput): Promise<unknown> {
-    return this.write('POST', '/services/event/v1/', { ...input });
+    return this.write('POST', '/services/event/v1/', { event: { ...input } });
   }
 
   /**
-   * Edit an event — `PUT /services/event/v1/{id}` with a partial patch.
+   * Edit an event — **`PATCH /services/event/v1/{id}`** with the patch wrapped in
+   * an `event` envelope → `200`.
    *
-   * UNVERIFIED payload — see issue #3. Method (PUT vs PATCH) and accepted keys
-   * are unconfirmed.
+   * VERIFIED (live probe 2026-06-01): `PATCH` with `{event:{title}}` changed the
+   * title (200); a bare `{title}` 200'd but was a no-op, `PUT` 500'd. So the
+   * method is PATCH and the body must nest the fields under `event`.
    */
   async updateEvent(eventId: string, patch: UpdateEventPatch): Promise<unknown> {
-    return this.write('PUT', `/services/event/v1/${encodeURIComponent(eventId)}`, { ...patch });
+    return this.write('PATCH', `/services/event/v1/${encodeURIComponent(eventId)}`, {
+      event: { ...patch },
+    });
   }
 
   /**

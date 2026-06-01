@@ -84,11 +84,19 @@ freshly-read value succeeds. Read the cookie fresh per request (don't cache).
 ### TWO write API surfaces (live probe 2026-06-01)
 Evite splits writes across two bases — this matters for every write tool:
 
-**1. `/services/event/v1/{id}/…`** — REST. Two shapes, both VERIFIED:
+**1. `/services/event/v1/{id}/…`** — REST. All VERIFIED:
 - **Guest RSVP**: **`PUT /services/event/v1/{id}/guests/{guestId}`** → `200`, body
   `{rsvpResponse, numberOfAdults, numberOfKids, comments?}` (field names match the
   read `Guest` shape). VERIFIED: the `PUT` was accepted; `POST` to the same path,
   `…/actions/rsvp/`, and `/ajax/…/rsvp/` all `404`. → `EviteClient.rsvp()`.
+- **Edit event**: **`PATCH /services/event/v1/{id}`** → `200`, body wrapped:
+  `{event:{…fields}}` (e.g. `{event:{title}}` changed the title). A bare `{title}`
+  200'd but was a no-op; `PUT` `500`d. → `EviteClient.updateEvent()`.
+- **Create event**: **`POST /services/event/v1/`**, body `{event:{title,
+  startDatetime, templateName, …}}` (Pydantic named those three as required).
+  CREATES a `draft` — but the API returns `500 "Unknown error"` even on success
+  (a secondary post-create step fails), so the call throws though the event
+  exists. → `EviteClient.createEvent()` (treat 500 as "possibly created").
 - **Host lifecycle actions**: **`POST /services/event/v1/{id}/actions/{verb}/`** →
   `202` (action sub-paths, not PUT/POST to the bare resource). VERIFIED verbs:
   `cancel` (→ `cancelEvent()`, also the "delete draft" action) and `reinstate`
@@ -115,11 +123,14 @@ So **RSVP + host lifecycle live on `/services/…`**, while the **create→add-g
 send "Fabric" flow lives on `/ajax/event/{id}/…`** (JSON, `X-CSRFToken`). The
 event-detail create/save goes through the Fabric editor's own (separate) API.
 
-> ✅ RSVP + add-guest now VERIFIED (above). Remaining writes: **send invitation**
-> and **send message** (`/ajax/event/{id}/…` family) and **create/update event**
-> (Fabric editor's own API). `read_network_requests` exposes method+url+status but
-> NOT the request body, so bodies are reverse-engineered via probe-response errors
-> (the `DraftGuest` 500 pinned the array shape) or read back from the stored resource.
+> ✅ VERIFIED: rsvp, add-guest, create, update, cancel, reinstate. Only the
+> **broadcast writes remain** — **send invitation** ("Send now") and **send message**
+> (host→guests). `/posts/` is GET-only (`405` on POST/PUT/PATCH), and `/actions/`
+> message verbs all `404`, so these aren't blind-probeable — capture the endpoint
+> from the dashboard "Send message" / "Send now" UI (which actually broadcasts).
+> Method note: bodies were reverse-engineered from probe-response errors — the
+> `DraftGuest` `500` pinned the add-guest array; Pydantic `422`s named create's
+> required fields; method/path found by watching 404 vs 405 vs 500.
 
 ### Web routes (verified)
 - Guest/event view: **`/event/{ID}`** (`evite.me/<short>` redirects here).
@@ -132,14 +143,19 @@ event-detail create/save goes through the Fabric editor's own (separate) API.
   `title`, `date` (`YYYY-MM-DD`, hidden) + time, `location`, `host`, `phone`,
   `event_option_max_guests`, plus gifting/signup-list fields and a custom `question`.
 
-### Still UNVERIFIED (issue #3) — endpoints narrowed, bodies pending
-- **Send invitation** — `/ajax/event/{id}/…` (the `guestlist/sent/` list is what
-  "Send now" populates); exact send endpoint + body pending.
-- **Send message** — `…/posts/` (read-verified location) or an `/ajax/event/{id}/…`
-  sibling; body `{ message }`.
-- **Create / update event** — the Fabric editor (`/invitation/{id}/{step}`) posts to
-  its own API (neither `/services/` nor `/ajax/`); validation-gated (requires title,
-  date, and edited sample text). On Finish the event reaches status `sending`.
+### Still UNVERIFIED (issue #3) — the two broadcast writes
+- **Send invitation** ("Send now") — `/ajax/event/{id}/…` (the `guestlist/sent/`
+  list is what it populates); exact send endpoint + body pending. Needs UI capture.
+- **Send message** (host→guests) — NOT `/posts/` (GET-only, `405`) and not any
+  `/actions/<verb>/` (all `404`). Capture from the dashboard "Send message" UI.
+
+Both actually broadcast (to guests), so verifying them means a real send — do it on
+a throwaway whose only guest is a blackholed `@example.com` address.
+
+> The original assumption that create/update used a separate "Fabric" API was
+> WRONG — they're plain `/services/event/v1/` calls (create = POST to the
+> collection, update = PATCH the resource), both VERIFIED above. The Fabric editor
+> (`/invitation/{id}/{step}`) is just the UI; it ultimately calls those.
 
 ### Capture methodology (lesson learned)
 **Read writes at the browser/network layer (`read_network_requests`), NOT via an

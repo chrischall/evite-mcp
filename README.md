@@ -2,11 +2,11 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for [Evite](https://www.evite.com) — read and act on your events as both **guest** (invitations received) and **host** (events you created): list events, view guest lists & RSVP tallies, RSVP, message guests, and create/edit events. Built on [`@chrischall/mcp-utils`](https://github.com/chrischall/mcp-utils).
 
-> **Status: read tools live.** The five read tools below work against Evite's internal API, authenticating from a raw cookie env var or a signed-in browser tab (fetchproxy bootstrap). Tier-1 email/password login and all write tools are still pending — tracked on [#2](https://github.com/chrischall/evite-mcp/issues/2) and [#3](https://github.com/chrischall/evite-mcp/issues/3).
+> **Status: read tools live; write tools are confirm-gated scaffolding.** The five read tools work against Evite's internal API, authenticating from a raw cookie env var or a signed-in browser tab (fetchproxy bootstrap). The four write tools are **confirm-gated; live payloads pending verification** — without `confirm: true` they only return a dry-run preview and send nothing. The exact write request bodies are not yet captured, so the live path is provisional ([#3](https://github.com/chrischall/evite-mcp/issues/3)). Tier-1 email/password login is also pending ([#2](https://github.com/chrischall/evite-mcp/issues/2)).
 
 ## Tools
 
-Five read tools (all read-only), plus `evite_healthcheck`:
+Five read tools (all read-only), four confirm-gated write tools, plus `evite_healthcheck`:
 
 | Tool | Endpoint | Returns |
 | --- | --- | --- |
@@ -15,6 +15,17 @@ Five read tools (all read-only), plus `evite_healthcheck`:
 | `evite_list_guests` | `GET /services/event/v1/{id}/guests/` | the guest list + RSVP responses |
 | `evite_rsvp_summary` | (derived from guests) | just the RSVP summary (yes/no/maybe/noReply + head counts) |
 | `evite_list_messages` | `GET /services/event/v1/{id}/posts/` | the event's Messages thread |
+
+### Write tools (confirm-gated; live payloads pending verification [#3](https://github.com/chrischall/evite-mcp/issues/3))
+
+Every write tool takes `confirm: boolean`. **Without `confirm: true` it performs no network call and returns a dry-run preview** of exactly what would be sent — that is the safe default. Only `confirm: true` reaches the live path. The request bodies and the CSRF header name are **UNVERIFIED** (no live compose-capture exists yet); they are centralized so they can be corrected from one place once captured.
+
+| Tool | Endpoint (POST/PUT) | Action |
+| --- | --- | --- |
+| `evite_rsvp` | `/services/event/v1/{id}/guests/{guestId}` | RSVP for a guest (response + adult/kid head counts + optional note) |
+| `evite_send_message` | `/services/event/v1/{id}/posts/` | post a message to the event Messages thread |
+| `evite_create_event` | `/services/event/v1/` | create an event (best-effort — the real flow is a multi-step wizard) |
+| `evite_update_event` | `/services/event/v1/{id}` | edit an event (only the fields you pass change) |
 
 ## Architecture
 
@@ -28,7 +39,7 @@ Two tiers are intentionally **deferred** (the resolver is shaped to slot them in
 - **Email/password form login** — not yet captured; tracked on [#2](https://github.com/chrischall/evite-mcp/issues/2).
 - **Fetchproxy as transport** (bot-wall retry through the browser bridge) — a fallback only needed if plain `fetch` trips a wall; not observed during discovery.
 
-Writes (`evite_rsvp`, `evite_send_message`, `evite_create_event`, `evite_update_event`) are still pending on [#3](https://github.com/chrischall/evite-mcp/issues/3) and will be confirm-gated (dry-run preview unless `confirm: true`).
+Writes (`evite_rsvp`, `evite_send_message`, `evite_create_event`, `evite_update_event`) ship as **confirm-gated scaffolding** (dry-run preview unless `confirm: true`). The single private `client.write()` helper attaches the CSRF token (the `csrftoken` cookie) via one centralized header (`CSRF_HEADER`, default `x-csrf-token`). The exact header name and the request payloads are **UNVERIFIED** pending a live compose-capture — tracked on [#3](https://github.com/chrischall/evite-mcp/issues/3).
 
 ## Development
 
@@ -45,7 +56,7 @@ npm test
 - Plan 2 (auth + read tools): [`docs/superpowers/plans/2026-05-31-evite-mcp-auth-and-reads.md`](docs/superpowers/plans/2026-05-31-evite-mcp-auth-and-reads.md)
 - Internal API reference (verified from a live session): [`docs/EVITE-API.md`](docs/EVITE-API.md)
 
-**Open work:** [#2 tier-1 email/password login](https://github.com/chrischall/evite-mcp/issues/2) and [#3 write tools](https://github.com/chrischall/evite-mcp/issues/3) remain. [#4](https://github.com/chrischall/evite-mcp/issues/4) tracks publishing the shared lib. (Discovery [#1](https://github.com/chrischall/evite-mcp/issues/1) and the read tools are done.)
+**Open work:** [#2 tier-1 email/password login](https://github.com/chrischall/evite-mcp/issues/2) remains, and [#3](https://github.com/chrischall/evite-mcp/issues/3) tracks verifying the write payloads + CSRF header against a live compose-capture (the write tools exist as confirm-gated scaffolding meanwhile). [#4](https://github.com/chrischall/evite-mcp/issues/4) tracks publishing the shared lib. (Discovery [#1](https://github.com/chrischall/evite-mcp/issues/1) and the read tools are done.)
 
 ## License
 

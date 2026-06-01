@@ -75,6 +75,26 @@ const updateEventArgs = z.object({
   confirm: schemaConfirm,
 });
 
+const addGuestArgs = z.object({
+  event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
+  guests: z
+    .array(
+      z.object({
+        name: z.string().min(1).describe('Guest name.'),
+        email: z.string().min(1).describe('Guest email address.'),
+      }),
+    )
+    .min(1)
+    .describe('Guests to add to the draft (un-sent) list.'),
+  confirm: schemaConfirm,
+});
+
+/** Shared schema for the event-lifecycle tools that take only an event id. */
+const eventIdArgs = z.object({
+  event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
+  confirm: schemaConfirm,
+});
+
 export function registerWriteTools(server: McpServer, client: EviteClient): void {
   server.registerTool(
     'evite_rsvp',
@@ -194,6 +214,101 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         return preview('update_event', { event_id: args.event_id, patch });
       }
       const data = await client.updateEvent(args.event_id, patch);
+      return textResult(data);
+    },
+  );
+
+  server.registerTool(
+    'evite_add_guest',
+    {
+      description:
+        "Add guests to an event's draft (un-sent) guest list. Nothing is emailed until you " +
+        'evite_send. Confirm-gated: without confirm:true this returns a dry-run preview. ' +
+        'NB: guests only persist on a finalized (sent/sending) event, not a bare new draft.',
+      annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false }),
+      inputSchema: addGuestArgs.shape,
+    },
+    async (raw) => {
+      const args = addGuestArgs.parse(raw);
+      if (args.confirm !== true) {
+        return preview('add_guest', { event_id: args.event_id, guests: args.guests });
+      }
+      const data = await client.addGuest(args.event_id, args.guests);
+      return textResult(data);
+    },
+  );
+
+  server.registerTool(
+    'evite_send',
+    {
+      description:
+        'Send the invitation to the ready-to-send (draft) guests of an event ("Send now"). ' +
+        'THIS EMAILS GUESTS. Confirm-gated: without confirm:true this returns a dry-run preview ' +
+        'and sends nothing.',
+      annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false }),
+      inputSchema: eventIdArgs.shape,
+    },
+    async (raw) => {
+      const args = eventIdArgs.parse(raw);
+      if (args.confirm !== true) {
+        return preview(
+          'send',
+          { event_id: args.event_id },
+          'THIS EMAILS the event’s ready-to-send guests. Body assumed empty; see issue #3.',
+        );
+      }
+      const data = await client.sendInvitation(args.event_id);
+      return textResult(data);
+    },
+  );
+
+  server.registerTool(
+    'evite_cancel_event',
+    {
+      description:
+        'Cancel an Evite event (also used to delete a draft). DESTRUCTIVE — may send a ' +
+        'cancellation notice to guests; reversible with evite_reinstate_event. Confirm-gated: ' +
+        'without confirm:true this returns a dry-run preview and cancels nothing.',
+      annotations: toolAnnotations({
+        title: 'Cancel an Evite event',
+        readOnly: false,
+        idempotent: true,
+      }),
+      inputSchema: eventIdArgs.shape,
+    },
+    async (raw) => {
+      const args = eventIdArgs.parse(raw);
+      if (args.confirm !== true) {
+        return preview(
+          'cancel_event',
+          { event_id: args.event_id },
+          'DESTRUCTIVE — cancels the event and may notify guests (reverse with evite_reinstate_event).',
+        );
+      }
+      const data = await client.cancelEvent(args.event_id);
+      return textResult(data);
+    },
+  );
+
+  server.registerTool(
+    'evite_reinstate_event',
+    {
+      description:
+        'Reinstate a previously-cancelled Evite event (the inverse of evite_cancel_event). ' +
+        'Confirm-gated: without confirm:true this returns a dry-run preview and changes nothing.',
+      annotations: toolAnnotations({
+        title: 'Reinstate an Evite event',
+        readOnly: false,
+        idempotent: true,
+      }),
+      inputSchema: eventIdArgs.shape,
+    },
+    async (raw) => {
+      const args = eventIdArgs.parse(raw);
+      if (args.confirm !== true) {
+        return preview('reinstate_event', { event_id: args.event_id });
+      }
+      const data = await client.reinstateEvent(args.event_id);
       return textResult(data);
     },
   );

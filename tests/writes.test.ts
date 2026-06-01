@@ -18,11 +18,19 @@ function fakeClient() {
     sendMessage: vi.fn(async () => ({ ok: true })),
     createEvent: vi.fn(async () => ({ event: { id: 'NEW' } })),
     updateEvent: vi.fn(async () => ({ event: { id: 'EVENTID0' } })),
+    addGuest: vi.fn(async () => ({ ok: true })),
+    sendInvitation: vi.fn(async () => ({ ok: true })),
+    cancelEvent: vi.fn(async () => ({ ok: true })),
+    reinstateEvent: vi.fn(async () => ({ ok: true })),
   } as unknown as EviteClient & {
     rsvp: ReturnType<typeof vi.fn>;
     sendMessage: ReturnType<typeof vi.fn>;
     createEvent: ReturnType<typeof vi.fn>;
     updateEvent: ReturnType<typeof vi.fn>;
+    addGuest: ReturnType<typeof vi.fn>;
+    sendInvitation: ReturnType<typeof vi.fn>;
+    cancelEvent: ReturnType<typeof vi.fn>;
+    reinstateEvent: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -40,12 +48,21 @@ function guardFetch() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('write tool registration', () => {
-  it('registers the four write tools, all readOnlyHint:false', async () => {
+  it('registers the eight write tools, all readOnlyHint:false', async () => {
     const h = await harnessFor(fakeClient());
     const tools = (await h.client.listTools()).tools;
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
-      ['evite_create_event', 'evite_rsvp', 'evite_send_message', 'evite_update_event'].sort(),
+      [
+        'evite_add_guest',
+        'evite_cancel_event',
+        'evite_create_event',
+        'evite_reinstate_event',
+        'evite_rsvp',
+        'evite_send',
+        'evite_send_message',
+        'evite_update_event',
+      ].sort(),
     );
     for (const t of tools) {
       expect(t.annotations?.readOnlyHint).toBe(false);
@@ -225,6 +242,77 @@ describe('evite_update_event', () => {
     const res = await h.callTool('evite_update_event', { event_id: 'EVENTID0', confirm: true });
     expect(res.isError).toBe(true);
     expect(client.updateEvent).not.toHaveBeenCalled();
+    await h.close();
+  });
+});
+
+describe('evite_add_guest', () => {
+  const guests = [{ name: 'A', email: 'a@example.com' }];
+
+  it('without confirm: previews and makes no call', async () => {
+    const fetchSpy = guardFetch();
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_add_guest', { event_id: 'EVENTID0', guests });
+    expect(client.addGuest).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.content[0]!.text as string).toMatch(/preview/i);
+    await h.close();
+  });
+
+  it('with confirm: calls client.addGuest with the guest list', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_add_guest', { event_id: 'EVENTID0', guests, confirm: true });
+    expect(client.addGuest).toHaveBeenCalledWith('EVENTID0', guests);
+    await h.close();
+  });
+});
+
+describe('evite_send', () => {
+  it('without confirm: previews (warns it emails) and makes no call', async () => {
+    const fetchSpy = guardFetch();
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_send', { event_id: 'EVENTID0' });
+    expect(client.sendInvitation).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.content[0]!.text as string).toMatch(/email/i);
+    await h.close();
+  });
+
+  it('with confirm: calls client.sendInvitation', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_send', { event_id: 'EVENTID0', confirm: true });
+    expect(client.sendInvitation).toHaveBeenCalledWith('EVENTID0');
+    await h.close();
+  });
+});
+
+describe('evite_cancel_event / evite_reinstate_event', () => {
+  it('cancel without confirm: previews (warns destructive) and makes no call', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_cancel_event', { event_id: 'EVENTID0' });
+    expect(client.cancelEvent).not.toHaveBeenCalled();
+    expect(res.content[0]!.text as string).toMatch(/destructive/i);
+    await h.close();
+  });
+
+  it('cancel with confirm: calls client.cancelEvent', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_cancel_event', { event_id: 'EVENTID0', confirm: true });
+    expect(client.cancelEvent).toHaveBeenCalledWith('EVENTID0');
+    await h.close();
+  });
+
+  it('reinstate with confirm: calls client.reinstateEvent', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_reinstate_event', { event_id: 'EVENTID0', confirm: true });
+    expect(client.reinstateEvent).toHaveBeenCalledWith('EVENTID0');
     await h.close();
   });
 });

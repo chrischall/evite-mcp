@@ -104,6 +104,26 @@ describe('EviteClient — sendMessage (VERIFIED endpoint)', () => {
   });
 });
 
+describe('EviteClient — addGuest (VERIFIED endpoint)', () => {
+  it('POSTs the guestlist/draft endpoint with a TOP-LEVEL JSON ARRAY of guests', async () => {
+    const spy = mockFetch({ body: { ok: true } });
+    const client = newClient();
+    const guests = [
+      { name: 'A', email: 'a@example.com' },
+      { name: 'B', email: 'b@example.com' },
+    ];
+    await client.addGuest('EVENTID0', guests);
+
+    const url = spy.mock.calls[0]![0] as string;
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(url).toBe('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/');
+    expect(init.method).toBe('POST');
+    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    // Verified live: the body is a top-level array (server does `for g: DraftGuest(**g)`).
+    expect(JSON.parse(init.body as string)).toEqual(guests);
+  });
+});
+
 describe('EviteClient — createEvent', () => {
   it('POSTs /services/event/v1/ with the input nested under `event`', async () => {
     const spy = mockFetch({ body: { event: { id: 'NEW' } } });

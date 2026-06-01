@@ -84,9 +84,15 @@ export interface SendMessageInput {
   message: string;
 }
 
+/** A guest to add to an event's draft guest list ({@link EviteClient.addGuest}). */
+export interface GuestDraft {
+  name: string;
+  email: string;
+}
+
 /**
- * Best-effort event-create input. The real create flow is the site's multi-step
- * wizard; this single-POST shape is a placeholder until the wizard is captured.
+ * Event-create input. The create API requires `title`, `startDatetime`, and
+ * `templateName` (extra keys are passed through under the `event` envelope).
  */
 export interface CreateEventInput {
   title: string;
@@ -242,7 +248,8 @@ export class EviteClient {
   private async write<T>(
     method: 'POST' | 'PUT' | 'PATCH',
     path: string,
-    body: Record<string, unknown>,
+    // `unknown` (not just an object): the add-guest write sends a top-level JSON array.
+    body: unknown,
   ): Promise<T> {
     const session = await this.getSession();
     const url = `${BASE_URL}${path}`;
@@ -310,6 +317,25 @@ export class EviteClient {
       'POST',
       `/tsunami/v1/services/event/${encodeURIComponent(eventId)}/guest/${encodeURIComponent(guestId)}/messages`,
       { message: input.message },
+    );
+  }
+
+  /**
+   * Add guests to the event's draft (un-sent) guest list —
+   * **`POST /ajax/event/{id}/guestlist/draft/`**, body a top-level JSON array
+   * `[{ name, email }, …]`.
+   *
+   * VERIFIED (live probe 2026-06-01): the array shape was pinned by the server's
+   * `DraftGuest(**g)` error; the guest persists (`count` 0→1) and the server fills
+   * `guest_id`/`invite_method`/etc. Safe — adds to the DRAFT list, so nothing is
+   * sent until {@link sendInvitation}. NB: a guest only persists once the event is
+   * finalized (status `sending`); on a bare `draft` the POST 200s but drops it.
+   */
+  async addGuest(eventId: string, guests: GuestDraft[]): Promise<unknown> {
+    return this.write(
+      'POST',
+      `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`,
+      guests,
     );
   }
 

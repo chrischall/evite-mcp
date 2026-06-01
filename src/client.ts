@@ -591,7 +591,9 @@ export class EviteClient {
     if (!match) {
       // Non-redirect (e.g. a 500): the Location header is empty here, so read the
       // actual response body for the error message, falling back to `location`.
-      const body = await response.text().catch(() => location);
+      // `.catch(() => '')` mirrors get()/write(); `body || location` keeps any
+      // non-matching Location as a last resort.
+      const body = await response.text().catch(() => '');
       throw new Error(
         formatApiError(response.status, 'GET', '/plus/create/{id}/copy/', body || location, {
           service: 'Evite',

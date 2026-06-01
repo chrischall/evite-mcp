@@ -327,4 +327,15 @@ describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
     const client = newClient();
     await expect(client.duplicateEvent('E')).rejects.toThrow(/upstream boom/);
   });
+
+  it('still throws when reading the error body fails (text() rejects)', async () => {
+    // Exercises the `.catch(() => '')` fallback on the body read.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      status: 500,
+      headers: { get: () => '' },
+      text: () => Promise.reject(new Error('stream broken')),
+    } as unknown as Response);
+    const client = newClient();
+    await expect(client.duplicateEvent('E')).rejects.toThrow();
+  });
 });

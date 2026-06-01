@@ -175,11 +175,20 @@ Captured from a DevTools HAR (Preserve-log on) of real actions on a throwaway:
   NOT yet tooled — needs the matching full-object GET before a safe partial-update tool
   can be built (posting a partial object would drop fields).
 
+### Broadcast to RSVP segments — VERIFIED endpoint + body (captured curl 2026-06-01)
+- **Message guests / broadcast** — **`POST /tsunami/v1/services/event/{id}/broadcast/`**
+  (a THIRD-base `/tsunami/` call, distinct from the per-guest `…/guest/{gid}/messages`).
+  Body (fully captured, not assumed):
+  `{ "message": "...", "captcha": null, "participantCount": N, "virtual_groups": ["yes"] }`
+  where `virtual_groups` names the RSVP segments to reach (the captured call targeted the
+  `yes` group; the dashboard URL is `/event/{id}/messages/broadcast/{group}`). `captcha`
+  is `null`; `participantCount` is the recipient count the UI sends along (informational —
+  we send it only when the caller provides one). This really emails everyone in those
+  segments. → `EviteClient.broadcast()` / `evite_broadcast`.
+
 ### Not a JSON endpoint
 - **Profile / whoami** — no `/services/` or `/ajax/` user endpoint exists; the signed-in
   user's name/email is server-rendered into the page HTML. No clean `evite_me` tool.
-- **Message all guests** — the verified `send_message` is per-guest (`/tsunami/`); a
-  single broadcast-to-all path was never observed (the UI fans out per guest).
 
 > The original assumption that create/update used a separate "Fabric" API was
 > WRONG — they're plain `/services/event/v1/` calls (create = POST to the

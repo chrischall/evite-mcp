@@ -108,7 +108,11 @@ describe('EviteClient — createEvent', () => {
   it('POSTs /services/event/v1/ with the input nested under `event`', async () => {
     const spy = mockFetch({ body: { event: { id: 'NEW' } } });
     const client = newClient();
-    await client.createEvent({ title: 'Pool Party', startDatetime: '2026-07-01T18:00:00' });
+    await client.createEvent({
+      title: 'Pool Party',
+      startDatetime: '2026-07-01T18:00:00',
+      templateName: 'camp-confetti',
+    });
 
     const url = spy.mock.calls[0]![0] as string;
     const init = spy.mock.calls[0]![1] as RequestInit;
@@ -117,7 +121,7 @@ describe('EviteClient — createEvent', () => {
     expect(init.method).toBe('POST');
     expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
     expect(bodyOf(spy)).toEqual({
-      event: { title: 'Pool Party', startDatetime: '2026-07-01T18:00:00' },
+      event: { title: 'Pool Party', startDatetime: '2026-07-01T18:00:00', templateName: 'camp-confetti' },
     });
   });
 });
@@ -183,7 +187,7 @@ describe('EviteClient — CSRF presence', () => {
     const client = newClient();
     await client.rsvp('E', 'G', { response: 'maybe', numberOfAdults: 1, numberOfKids: 0 });
     await client.sendMessage('E', 'G', { message: 'x' });
-    await client.createEvent({ title: 't' });
+    await client.createEvent({ title: 't', startDatetime: 's', templateName: 'tpl' });
     await client.updateEvent('E', { title: 't' });
     for (let n = 0; n < 4; n++) {
       expect(headersOf(spy, n)[CSRF_HEADER]).toBe('tok123');

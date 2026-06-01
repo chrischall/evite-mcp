@@ -90,7 +90,10 @@ export interface SendMessageInput {
  */
 export interface CreateEventInput {
   title: string;
-  startDatetime?: string;
+  /** Required by the create API (Pydantic). */
+  startDatetime: string;
+  /** Required by the create API (Pydantic). */
+  templateName: string;
   endDatetime?: string;
   message?: string;
   [key: string]: unknown;

@@ -9,27 +9,30 @@ import type { EviteClient } from '../client.js';
 // SAFETY MODEL: every tool here takes `confirm` (schemaConfirm). The DEFAULT —
 // `confirm` absent or false — performs NO network call and returns a dry-run
 // PREVIEW of exactly what would happen. Only `confirm: true` reaches the client
-// write methods (which themselves are the only thing that mutates Evite).
+// write methods (the only thing that mutates Evite).
 //
-// The underlying write PAYLOADS are UNVERIFIED — no live compose-capture exists
-// yet (issue #3). Each tool's description and preview flag this so a caller who
-// confirms knows the live path is provisional.
+// These are REAL mutations — an RSVP, a guest message, a created/edited event —
+// so confirm-gating keeps a human in the loop. The endpoints are live-verified
+// (see docs/EVITE-API.md); the per-tool `caveat` below flags the few writes whose
+// exact request body is still assumed rather than captured.
 // ────────────────────────────────────────────────────────────────────────────
-
-/** Common shared note flagged into previews of unverified writes. */
-const UNVERIFIED_NOTE =
-  'Live write payload is UNVERIFIED (pending a compose-capture, issue #3).';
 
 /**
  * Build a dry-run preview result. Returned whenever `confirm` is not true — no
- * network call is made. Includes a `preview` marker, the action, and the exact
- * values that WOULD be sent, plus a reminder to pass `confirm: true`.
+ * network call is made. Includes a `preview` marker, the action, the exact values
+ * that WOULD be sent, a reminder to pass `confirm: true`, and an optional caveat.
  */
-function preview(action: string, details: Record<string, unknown>): ReturnType<typeof textResult> {
+function preview(
+  action: string,
+  details: Record<string, unknown>,
+  caveat?: string,
+): ReturnType<typeof textResult> {
   return textResult({
     preview: true,
     action,
-    note: `DRY RUN — nothing was sent. Re-run with confirm: true to perform this write. ${UNVERIFIED_NOTE}`,
+    note: `DRY RUN — nothing was sent. Re-run with confirm: true to perform this write.${
+      caveat ? ` ${caveat}` : ''
+    }`,
     wouldSend: details,
   });
 }
@@ -53,7 +56,11 @@ const sendMessageArgs = z.object({
 
 const createEventArgs = z.object({
   title: z.string().min(1).describe('Event title.'),
-  start_datetime: z.string().optional().describe('Start datetime (ISO 8601, event-local).'),
+  start_datetime: z.string().min(1).describe('Start datetime (ISO 8601, event-local). Required.'),
+  template_name: z
+    .string()
+    .min(1)
+    .describe('Invitation template name (required by the create API; e.g. a gallery design id).'),
   end_datetime: z.string().optional().describe('End datetime (ISO 8601, event-local).'),
   message: z.string().optional().describe('Event message / description.'),
   confirm: schemaConfirm,
@@ -74,8 +81,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'RSVP for a guest on an Evite event. Confirm-gated: without confirm:true this returns a ' +
-        'dry-run preview and sends nothing. ' +
-        UNVERIFIED_NOTE,
+        'dry-run preview and sends nothing.',
       annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false }),
       inputSchema: rsvpArgs.shape,
     },
@@ -105,20 +111,19 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_send_message',
     {
       description:
-        "Post a message to an Evite event's Messages thread. Confirm-gated: without confirm:true " +
-        'this returns a dry-run preview and sends nothing. ' +
-        UNVERIFIED_NOTE,
-      annotations: toolAnnotations({ title: 'Message Evite event guests', readOnly: false }),
+        'Send a private message to one Evite event guest. This really emails the guest. ' +
+        'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing.',
+      annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false }),
       inputSchema: sendMessageArgs.shape,
     },
     async (raw) => {
       const args = sendMessageArgs.parse(raw);
       if (args.confirm !== true) {
-        return preview('send_message', {
-          event_id: args.event_id,
-          guest_id: args.guest_id,
-          message: args.message,
-        });
+        return preview(
+          'send_message',
+          { event_id: args.event_id, guest_id: args.guest_id, message: args.message },
+          'Exact request body is assumed (endpoint verified); see issue #3.',
+        );
       }
       const data = await client.sendMessage(args.event_id, args.guest_id, { message: args.message });
       return textResult(data);
@@ -129,27 +134,32 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_create_event',
     {
       description:
-        'Create an Evite event. Confirm-gated: without confirm:true this returns a dry-run preview ' +
-        'and sends nothing. NOTE: the real Evite create flow is a multi-step wizard, so this ' +
-        'single-step create is best-effort. ' +
-        UNVERIFIED_NOTE,
+        'Create an Evite event (as a draft). Requires title, start_datetime, and template_name. ' +
+        'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing. ' +
+        'NOTE: the create API returns a 500 even when it succeeds (the draft is created), so this ' +
+        'call may throw though the event exists — re-list drafts rather than retrying.',
       annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false }),
       inputSchema: createEventArgs.shape,
     },
     async (raw) => {
       const args = createEventArgs.parse(raw);
       if (args.confirm !== true) {
-        return preview('create_event', {
-          title: args.title,
-          start_datetime: args.start_datetime,
-          end_datetime: args.end_datetime,
-          message: args.message,
-          caveat: 'Create is multi-step in the Evite wizard — single-step create is UNVERIFIED.',
-        });
+        return preview(
+          'create_event',
+          {
+            title: args.title,
+            start_datetime: args.start_datetime,
+            template_name: args.template_name,
+            end_datetime: args.end_datetime,
+            message: args.message,
+          },
+          'Create returns a 500 even on success (the draft IS created) — re-list drafts to confirm.',
+        );
       }
       const data = await client.createEvent({
         title: args.title,
         startDatetime: args.start_datetime,
+        templateName: args.template_name,
         endDatetime: args.end_datetime,
         message: args.message,
       });
@@ -162,8 +172,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Edit an existing Evite event (only the fields you pass change). Confirm-gated: without ' +
-        'confirm:true this returns a dry-run preview and sends nothing. ' +
-        UNVERIFIED_NOTE,
+        'confirm:true this returns a dry-run preview and sends nothing.',
       annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false }),
       inputSchema: updateEventArgs.shape,
     },

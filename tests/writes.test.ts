@@ -156,14 +156,15 @@ describe('evite_create_event', () => {
     const res = await h.callTool('evite_create_event', {
       title: 'Pool Party',
       start_datetime: '2026-07-01T18:00:00',
+      template_name: 'camp-confetti',
     });
     expect(client.createEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     const text = res.content[0]!.text as string;
     expect(text).toMatch(/preview/i);
     expect(text).toContain('Pool Party');
-    // create is multi-step / unverified — the preview should say so
-    expect(text).toMatch(/unverified|multi-step/i);
+    // create returns a 500 even on success — the preview should warn about that
+    expect(text).toMatch(/500/i);
     await h.close();
   });
 
@@ -173,12 +174,14 @@ describe('evite_create_event', () => {
     await h.callTool('evite_create_event', {
       title: 'Pool Party',
       start_datetime: '2026-07-01T18:00:00',
+      template_name: 'camp-confetti',
       message: 'come swim',
       confirm: true,
     });
     expect(client.createEvent).toHaveBeenCalledWith({
       title: 'Pool Party',
       startDatetime: '2026-07-01T18:00:00',
+      templateName: 'camp-confetti',
       endDatetime: undefined,
       message: 'come swim',
     });

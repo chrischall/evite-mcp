@@ -221,3 +221,35 @@ describe('EviteClient — health', () => {
     expect(client.health().authMode).toBe('unresolved');
   });
 });
+
+describe('EviteClient — listTemplates', () => {
+  const galleryHtml = `
+    <a href="/invitation/camp-confetti_vanilla_kids/create">x</a>
+    <a href="/invitation/balloon-bash_blue_bday/preview">y</a>
+    <a href="/invitation/camp-confetti_vanilla_kids/create">dup</a>
+    <a href="/somewhere/else/">z</a>`;
+
+  it('GETs the gallery category page and parses unique slugs + display names', async () => {
+    const spy = mockFetch({ rawBody: galleryHtml });
+    const client = newClient();
+    const res = await client.listTemplates('birthday/kids-teens/kids-birthday');
+
+    expect(spy.mock.calls[0]![0]).toBe(
+      'https://www.evite.com/invites/birthday/kids-teens/kids-birthday/',
+    );
+    expect(res.count).toBe(2); // deduped
+    expect(res.templates).toEqual([
+      { templateName: 'camp-confetti_vanilla_kids', displayName: 'Camp Confetti' },
+      { templateName: 'balloon-bash_blue_bday', displayName: 'Balloon Bash' },
+    ]);
+  });
+
+  it('appends the free filter when free_only is set', async () => {
+    const spy = mockFetch({ rawBody: galleryHtml });
+    const client = newClient();
+    await client.listTemplates('party', true);
+    expect(spy.mock.calls[0]![0]).toBe(
+      'https://www.evite.com/invites/party/?active_filter=free_premium%2Cfree',
+    );
+  });
+});

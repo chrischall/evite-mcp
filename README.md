@@ -6,15 +6,16 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for [Evite](h
 
 ## Tools
 
-Five read tools (all read-only), eight confirm-gated write tools, plus `evite_healthcheck`:
+Six read tools (all read-only), eight confirm-gated write tools, plus `evite_healthcheck`:
 
 | Tool | Endpoint | Returns |
 | --- | --- | --- |
-| `evite_list_events` | `GET /services/events/v1/` | your events + a totals breakdown (`filterBy` = all/host/others, repeatable `status`) |
+| `evite_list_events` | `GET /services/events/v1/` | your events + a totals breakdown (`filterBy` = all/host/others, repeatable `status`, `offset`/`numResults` paging) |
 | `evite_get_event` | `GET /services/event/v1/{id}` | single-event detail (event, settings, location) |
-| `evite_list_guests` | `GET /services/event/v1/{id}/guests/` | the guest list + RSVP responses |
+| `evite_list_guests` | `GET /services/event/v1/{id}/guests/` | the guest list + RSVP responses (delivery status, views, short links) |
 | `evite_rsvp_summary` | (derived from guests) | just the RSVP summary (yes/no/maybe/noReply + head counts) |
 | `evite_list_messages` | `GET /services/event/v1/{id}/posts/` | the event's Messages thread |
+| `evite_list_templates` | scrapes `/invites/{category}/` | invitation template slugs (the `template_name` `evite_create_event` needs) + display names |
 
 ### Write tools (confirm-gated)
 

@@ -23,6 +23,16 @@ const eventIdArgs = z.object({
   event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
 });
 
+const listTemplatesArgs = z.object({
+  category: z
+    .string()
+    .min(1)
+    .describe(
+      'Gallery category path, e.g. "birthday/kids-teens/kids-birthday", "party", or "wedding".',
+    ),
+  free_only: z.boolean().default(false).describe('List only free (non-premium) templates.'),
+});
+
 export function registerEventTools(server: McpServer, client: EviteClient): void {
   server.registerTool(
     'evite_list_events',
@@ -57,6 +67,25 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
     async (raw) => {
       const args = eventIdArgs.parse(raw);
       const data = await client.getEvent(args.event_id);
+      return textResult(data);
+    },
+  );
+
+  server.registerTool(
+    'evite_list_templates',
+    {
+      description:
+        'List invitation templates from a gallery category — use this to find the `template_name` ' +
+        'that evite_create_event requires. `category` is a gallery path, e.g. ' +
+        '"birthday/kids-teens/kids-birthday", "party", "wedding", or "baby-kids/baby/baby-shower". ' +
+        'Set free_only:true to list only free templates. Returns each template’s slug (= ' +
+        'template_name) and a readable display name.',
+      annotations: toolAnnotations({ title: 'List Evite invitation templates' }),
+      inputSchema: listTemplatesArgs.shape,
+    },
+    async (raw) => {
+      const args = listTemplatesArgs.parse(raw);
+      const data = await client.listTemplates(args.category, args.free_only);
       return textResult(data);
     },
   );

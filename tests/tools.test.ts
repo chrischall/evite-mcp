@@ -25,12 +25,18 @@ function fakeClient() {
     listGuests: vi.fn(async () => eventGuests),
     rsvpSummary: vi.fn(async () => eventGuests.summary),
     listMessages: vi.fn(async () => eventPosts),
+    listTemplates: vi.fn(async () => ({
+      category: 'party',
+      count: 1,
+      templates: [{ templateName: 'camp-confetti_vanilla_kids', displayName: 'Camp Confetti' }],
+    })),
   } as unknown as EviteClient & {
     listEvents: ReturnType<typeof vi.fn>;
     getEvent: ReturnType<typeof vi.fn>;
     listGuests: ReturnType<typeof vi.fn>;
     rsvpSummary: ReturnType<typeof vi.fn>;
     listMessages: ReturnType<typeof vi.fn>;
+    listTemplates: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -46,7 +52,7 @@ async function harnessFor(client: EviteClient) {
 afterEach(() => vi.restoreAllMocks());
 
 describe('tool registration', () => {
-  it('registers all five read tools', async () => {
+  it('registers all six read tools', async () => {
     const h = await harnessFor(fakeClient());
     const names = (await h.listTools()).map((t) => t.name).sort();
     expect(names).toEqual(
@@ -55,9 +61,18 @@ describe('tool registration', () => {
         'evite_list_events',
         'evite_list_guests',
         'evite_list_messages',
+        'evite_list_templates',
         'evite_rsvp_summary',
       ].sort(),
     );
+    await h.close();
+  });
+
+  it('evite_list_templates passes category + free_only through', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_list_templates', { category: 'party', free_only: true });
+    expect(client.listTemplates).toHaveBeenCalledWith('party', true);
     await h.close();
   });
 });

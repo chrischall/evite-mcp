@@ -110,6 +110,21 @@ export interface UpdateEventPatch {
   [key: string]: unknown;
 }
 
+/** An invitation template ({@link EviteClient.listTemplates}). */
+export interface Template {
+  /** The template slug — pass this as `template_name` to {@link EviteClient.createEvent}. */
+  templateName: string;
+  /** A readable name derived from the slug (e.g. `camp-confetti_vanilla_kids` → "Camp Confetti"). */
+  displayName: string;
+}
+
+/** Result of {@link EviteClient.listTemplates}. */
+export interface ListTemplatesResult {
+  category: string;
+  count: number;
+  templates: Template[];
+}
+
 /** Injectable dependencies (tests inject a fake session resolver). */
 export interface EviteClientOptions {
   /** Resolve the session. Defaults to {@link resolveSession}. */
@@ -202,6 +217,55 @@ export class EviteClient {
   /** `GET /services/event/v1/{id}/guests/` — guest list + RSVP summary. */
   async listGuests(eventId: string): Promise<ListGuestsResult> {
     return this.get<ListGuestsResult>(`/services/event/v1/${encodeURIComponent(eventId)}/guests/`);
+  }
+
+  /** Authenticated GET returning the raw response text (for the SSR gallery pages). */
+  private async getHtml(path: string): Promise<string> {
+    const session = await this.getSession();
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: 'GET',
+      headers: { cookie: session.cookieHeader, accept: 'text/html' },
+    });
+    if (response.status === 401 || response.status === 403) {
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(formatApiError(response.status, 'GET', path, body, { service: 'Evite' }));
+    }
+    return response.text();
+  }
+
+  /**
+   * List invitation templates from a gallery category — the source of the
+   * `template_name` that {@link createEvent} requires.
+   *
+   * Evite's gallery is server-rendered (no JSON API), so this scrapes the
+   * category page HTML for the template slugs in `/invitation/{slug}/…` links
+   * (verified: the SSR markup carries every card's slug). `freeOnly` adds the
+   * `free` price filter so the page renders only free templates.
+   */
+  async listTemplates(category: string, freeOnly = false): Promise<ListTemplatesResult> {
+    const path =
+      `/invites/${category.replace(/^\/+|\/+$/g, '')}/` +
+      (freeOnly ? '?active_filter=free_premium%2Cfree' : '');
+    const html = await this.getHtml(path);
+
+    const slugs = new Set<string>();
+    const re = /\/invitation\/([a-z0-9][a-z0-9_-]+?)\/(?:create|preview|details)/gi;
+    for (const m of html.matchAll(re)) slugs.add(m[1]!.toLowerCase());
+
+    const templates: Template[] = [...slugs].map((templateName) => ({
+      templateName,
+      // "camp-confetti_vanilla_kids" → "Camp Confetti"
+      displayName: templateName
+        .split('_')[0]!
+        .split('-')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' '),
+    }));
+
+    return { category, count: templates.length, templates };
   }
 
   /** The `summary` slice of {@link listGuests} — powers `evite_rsvp_summary`. */

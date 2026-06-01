@@ -115,7 +115,7 @@ jobs:
       # runs with the OIDC token + CLAWHUB_TOKEN + GITHUB_TOKEN, so never an
       # unverified `releases/latest`). Bump the pin once in mcp-utils, not here.
       - name: Install mcp-publisher
-        uses: chrischall/mcp-utils/.github/actions/install-mcp-publisher@main
+        uses: chrischall/mcp-utils/.github/actions/install-mcp-publisher@v0.2.1
 
       - name: Authenticate to MCP Registry (OIDC)
         run: mcp-publisher login github-oidc

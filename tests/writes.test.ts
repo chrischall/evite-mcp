@@ -16,6 +16,7 @@ function fakeClient() {
   return {
     rsvp: vi.fn(async () => ({ ok: true })),
     sendMessage: vi.fn(async () => ({ ok: true })),
+    broadcast: vi.fn(async () => ({ ok: true })),
     createEvent: vi.fn(async () => ({ event: { id: 'NEW' } })),
     updateEvent: vi.fn(async () => ({ event: { id: 'EVENTID0' } })),
     addGuest: vi.fn(async () => ({ ok: true })),
@@ -37,6 +38,7 @@ function fakeClient() {
     cancelEvent: ReturnType<typeof vi.fn>;
     reinstateEvent: ReturnType<typeof vi.fn>;
     duplicateEvent: ReturnType<typeof vi.fn>;
+    broadcast: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -54,13 +56,14 @@ function guardFetch() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('write tool registration', () => {
-  it('registers the eleven write tools, all readOnlyHint:false', async () => {
+  it('registers the twelve write tools, all readOnlyHint:false', async () => {
     const h = await harnessFor(fakeClient());
     const tools = (await h.client.listTools()).tools;
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
         'evite_add_guest',
+        'evite_broadcast',
         'evite_cancel_event',
         'evite_create_event',
         'evite_duplicate_event',
@@ -169,6 +172,44 @@ describe('evite_send_message', () => {
     });
     expect(client.sendMessage).toHaveBeenCalledWith('EVENTID0', 'GUEST9', {
       message: 'hello all',
+    });
+    await h.close();
+  });
+});
+
+describe('evite_broadcast', () => {
+  it('without confirm: previews and makes no call', async () => {
+    const fetchSpy = guardFetch();
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_broadcast', {
+      event_id: 'EVENTID0',
+      message: 'See you Saturday!',
+      groups: ['yes', 'maybe'],
+    });
+    expect(client.broadcast).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const text = res.content[0]!.text as string;
+    expect(text).toMatch(/preview/i);
+    expect(text).toContain('See you Saturday!');
+    expect(text).toContain('yes');
+    await h.close();
+  });
+
+  it('with confirm: calls client.broadcast with message, groups, participantCount', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_broadcast', {
+      event_id: 'EVENTID0',
+      message: 'See you Saturday!',
+      groups: ['yes', 'maybe'],
+      participant_count: 4,
+      confirm: true,
+    });
+    expect(client.broadcast).toHaveBeenCalledWith('EVENTID0', {
+      message: 'See you Saturday!',
+      groups: ['yes', 'maybe'],
+      participantCount: 4,
     });
     await h.close();
   });

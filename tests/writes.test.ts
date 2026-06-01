@@ -24,6 +24,7 @@ function fakeClient() {
     sendInvitation: vi.fn(async () => ({ ok: true })),
     cancelEvent: vi.fn(async () => ({ ok: true })),
     reinstateEvent: vi.fn(async () => ({ ok: true })),
+    duplicateEvent: vi.fn(async () => ({ newEventId: 'NEW', customizeUrl: '/invitation/NEW/customize' })),
   } as unknown as EviteClient & {
     rsvp: ReturnType<typeof vi.fn>;
     sendMessage: ReturnType<typeof vi.fn>;
@@ -35,6 +36,7 @@ function fakeClient() {
     sendInvitation: ReturnType<typeof vi.fn>;
     cancelEvent: ReturnType<typeof vi.fn>;
     reinstateEvent: ReturnType<typeof vi.fn>;
+    duplicateEvent: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -52,7 +54,7 @@ function guardFetch() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('write tool registration', () => {
-  it('registers the ten write tools, all readOnlyHint:false', async () => {
+  it('registers the eleven write tools, all readOnlyHint:false', async () => {
     const h = await harnessFor(fakeClient());
     const tools = (await h.client.listTools()).tools;
     const names = tools.map((t) => t.name).sort();
@@ -61,6 +63,7 @@ describe('write tool registration', () => {
         'evite_add_guest',
         'evite_cancel_event',
         'evite_create_event',
+        'evite_duplicate_event',
         'evite_reinstate_event',
         'evite_remove_guest',
         'evite_rsvp',
@@ -367,6 +370,27 @@ describe('evite_cancel_event / evite_reinstate_event', () => {
     const h = await harnessFor(client);
     await h.callTool('evite_reinstate_event', { event_id: 'EVENTID0', confirm: true });
     expect(client.reinstateEvent).toHaveBeenCalledWith('EVENTID0');
+    await h.close();
+  });
+});
+
+describe('evite_duplicate_event', () => {
+  it('without confirm: previews and makes no call', async () => {
+    const fetchSpy = guardFetch();
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_duplicate_event', { event_id: 'EVENTID0' });
+    expect(client.duplicateEvent).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.content[0]!.text as string).toMatch(/preview/i);
+    await h.close();
+  });
+
+  it('with confirm: calls client.duplicateEvent', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_duplicate_event', { event_id: 'EVENTID0', confirm: true });
+    expect(client.duplicateEvent).toHaveBeenCalledWith('EVENTID0');
     await h.close();
   });
 });

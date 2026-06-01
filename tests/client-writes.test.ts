@@ -259,3 +259,24 @@ describe('EviteClient — CSRF presence', () => {
     expect(headers.cookie).toBe('x-evite-session=s; evtsession=e');
   });
 });
+
+describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
+  it('GETs the copy path and extracts the new event id from the 302 Location', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: '/invitation/NEWID9/customize?previous=copy_my_events&source_event=EVENTID0' },
+      }) as unknown as Response,
+    );
+    const client = newClient();
+    const result = await client.duplicateEvent('EVENTID0');
+
+    const url = spy.mock.calls[0]![0] as string;
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(url).toBe('https://www.evite.com/plus/create/EVENTID0/copy/?previous=my_events');
+    expect(init.method).toBe('GET');
+    expect(init.redirect).toBe('manual');
+    expect(result.newEventId).toBe('NEWID9');
+    expect(result.customizeUrl).toContain('source_event=EVENTID0');
+  });
+});

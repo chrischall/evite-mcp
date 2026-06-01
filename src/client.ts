@@ -216,14 +216,18 @@ export class EviteClient {
   // when a write tool is called with `confirm: true` — the default path returns
   // a dry-run preview without ever touching the network.
   //
-  // VERIFIED CONVENTION (live capture 2026-06-01): Evite mutations are action
-  // sub-paths, `POST /services/event/v1/{id}/actions/{verb}/`, returning 202
-  // Accepted — NOT a PUT/POST to the bare resource. Confirmed against the real
-  // "delete draft" write: `POST …/actions/cancel/` → 202. {@link cancelEvent} is
-  // therefore VERIFIED; rsvp/sendMessage/createEvent/updateEvent payloads remain
-  // UNVERIFIED but are most likely the same `/actions/{verb}/` family (issue #3).
-  // Capture note: read these at the browser/network layer — Evite's SPA closes
-  // over `fetch` at load, so an in-page monkeypatch never sees its calls.
+  // VERIFIED (live capture 2026-06-01): Evite splits writes across TWO bases —
+  //  1. host lifecycle actions: `POST /services/event/v1/{id}/actions/{verb}/`
+  //     → 202 (NOT PUT/POST to the bare resource). Confirmed via cancel, captured
+  //     twice. {@link cancelEvent} is VERIFIED.
+  //  2. guest/RSVP/send flow: `/ajax/event/{id}/…` (e.g. add-guest
+  //     `POST /ajax/event/{id}/guestlist/draft/` → 200, captured live).
+  // So rsvp/sendMessage most likely live under `/ajax/event/{id}/…`, not the
+  // `/services/` path stubbed below; createEvent goes through the Fabric editor's
+  // own API. Those three stay UNVERIFIED (endpoints narrowed, BODIES pending —
+  // see issue #3 + docs/EVITE-API.md). Capture note: read writes at the
+  // browser/network layer — the SPA closes over `fetch` at load, so an in-page
+  // monkeypatch never sees its calls (and that layer doesn't expose request bodies).
   // ──────────────────────────────────────────────────────────────────────────
 
   /**

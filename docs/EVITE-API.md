@@ -80,14 +80,30 @@ header: **`X-CSRFToken`** — `csrftoken` is Django's default CSRF *cookie* name
 so Django's default header `X-CSRFToken` is strongly indicated (centralized as
 `CSRF_HEADER` in `src/client.ts`).
 
-### VERIFIED write convention (live capture 2026-06-01)
-Evite mutations are **action sub-paths**, not PUT/POST to the bare resource:
-> **`POST /services/event/v1/{id}/actions/{verb}/`** → **`202 Accepted`**
+### TWO write API surfaces (live capture 2026-06-01)
+Evite splits writes across two bases — this matters for every write tool:
 
-Confirmed against the real **delete-draft** write:
-`POST /services/event/v1/{id}/actions/cancel/` (empty body) → `202`. This is the
-only fully-captured mutation and the template the others almost certainly follow.
-Implemented as the VERIFIED `EviteClient.cancelEvent()`.
+**1. `/services/event/v1/{id}/actions/{verb}/` → `202`** — REST host actions on an
+existing event. Mutations are **action sub-paths**, not PUT/POST to the bare
+resource. VERIFIED against the real cancel write `POST …/actions/cancel/` (empty
+body) → `202`, captured twice (delete-draft + cancel-event). Implemented as the
+VERIFIED `EviteClient.cancelEvent()`.
+
+**2. `/ajax/event/{id}/…`** — the legacy "ajax" API behind the create→guest→send
+("Fabric") flow. VERIFIED endpoints:
+- **Add guest**: `POST /ajax/event/{id}/guestlist/draft/` → `200` (captured live —
+  added a guest to a throwaway event).
+- Guest list (draft): `GET /ajax/event/{id}/guestlist/draft/?q=&search_by=all&search_type=contains&sort_by=&reverse=false&per_page=5000`
+- Guest list (sent): `GET /ajax/event/{id}/guestlist/sent/?…&per_page=25&page=1`
+- Contacts/import: `GET /ajax/event/{id}/guestlist/import/`, `…/guestlist/contacts`
+
+So **guest/RSVP/send writes live under `/ajax/event/{id}/…`**, while host lifecycle
+actions (cancel/reinstate) live under `/services/…/actions/`. The event-detail
+create/save itself goes through the Fabric editor's own (separate) API.
+
+> ⚠️ Request *bodies* for the `/ajax/` and Fabric writes are NOT yet captured —
+> `read_network_requests` exposes method+url+status but not the body, and the
+> in-page hook sees nothing (SPA fetch-closure). Endpoints are known; bodies pending.
 
 ### Web routes (verified)
 - Guest/event view: **`/event/{ID}`** (`evite.me/<short>` redirects here).
@@ -100,13 +116,18 @@ Implemented as the VERIFIED `EviteClient.cancelEvent()`.
   `title`, `date` (`YYYY-MM-DD`, hidden) + time, `location`, `host`, `phone`,
   `event_option_max_guests`, plus gifting/signup-list fields and a custom `question`.
 
-### Still UNVERIFIED (issue #3) — follow the verified `/actions/{verb}/` convention
-- **RSVP** — guest-response mutation; likely `…/guests/{guestId}/actions/…` or an
-  `…/actions/rsvp/` with `rsvpResponse`/`numberOfAdults`/`numberOfKids`/comment
-  (mirrors the verified READ `Guest` shape).
-- **Send message** — `…/posts/` (or `…/actions/post/`); body `{ message }`.
-- **Create / update event** — the editor "Save & exit" posts OUTSIDE `/services/`
-  (a different API base) and is validation-gated; create proper still needs a capture.
+### Still UNVERIFIED (issue #3) — endpoints narrowed, bodies pending
+- **RSVP / add guest** — under the `/ajax/event/{id}/guestlist/…` family (add-guest
+  `POST …/guestlist/draft/` is verified). RSVP is likely a sibling guestlist/guest
+  action; body mirrors the verified READ `Guest` shape (`rsvpResponse`,
+  `numberOfAdults`, `numberOfKids`, comment).
+- **Send invitation** — `/ajax/event/{id}/…` (the `guestlist/sent/` list is what
+  "Send now" populates); exact send endpoint + body pending.
+- **Send message** — `…/posts/` (read-verified location) or an `/ajax/event/{id}/…`
+  sibling; body `{ message }`.
+- **Create / update event** — the Fabric editor (`/invitation/{id}/{step}`) posts to
+  its own API (neither `/services/` nor `/ajax/`); validation-gated (requires title,
+  date, and edited sample text). On Finish the event reaches status `sending`.
 
 ### Capture methodology (lesson learned)
 **Read writes at the browser/network layer (`read_network_requests`), NOT via an

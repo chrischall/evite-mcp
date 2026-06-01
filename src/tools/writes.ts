@@ -375,4 +375,24 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       return textResult(data);
     },
   );
+
+  server.registerTool(
+    'evite_duplicate_event',
+    {
+      description:
+        'Duplicate an Evite event into a fresh draft (the "Duplicate event" action). Returns the ' +
+        'new draft event id. Confirm-gated: without confirm:true this returns a dry-run preview ' +
+        'and creates nothing.',
+      annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false }),
+      inputSchema: eventIdArgs.shape,
+    },
+    async (raw) => {
+      const args = eventIdArgs.parse(raw);
+      if (args.confirm !== true) {
+        return preview('duplicate_event', { event_id: args.event_id });
+      }
+      const data = await client.duplicateEvent(args.event_id);
+      return textResult(data);
+    },
+  );
 }

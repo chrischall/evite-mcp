@@ -132,6 +132,14 @@ export interface ListTemplatesResult {
   templates: Template[];
 }
 
+/** Result of {@link EviteClient.duplicateEvent}. */
+export interface DuplicateResult {
+  /** The id of the newly-created draft event. */
+  newEventId: string;
+  /** The editor URL the copy redirects to (carries `source_event`). */
+  customizeUrl: string;
+}
+
 /** Injectable dependencies (tests inject a fake session resolver). */
 export interface EviteClientOptions {
   /** Resolve the session. Defaults to {@link resolveSession}. */
@@ -518,5 +526,39 @@ export class EviteClient {
       `/services/event/v1/${encodeURIComponent(eventId)}/actions/reinstate/`,
       {},
     );
+  }
+
+  /**
+   * Duplicate an event into a fresh draft —
+   * **`GET /plus/create/{id}/copy/`** → `302` →
+   * `Location: /invitation/{newId}/customize?…&source_event={id}`.
+   *
+   * VERIFIED (live capture 2026-06-01): the "Duplicate event" action is a GET to
+   * the copy path that 302-redirects to the new draft's editor; the new event id
+   * is the `/invitation/{newId}/` segment of the redirect target.
+   */
+  async duplicateEvent(eventId: string): Promise<DuplicateResult> {
+    const session = await this.getSession();
+    const url = `${BASE_URL}/plus/create/${encodeURIComponent(eventId)}/copy/?previous=my_events`;
+    const headers: Record<string, string> = {
+      cookie: session.cookieHeader,
+      accept: 'text/html',
+    };
+    if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
+
+    const response = await fetch(url, { method: 'GET', headers, redirect: 'manual' });
+    if (response.status === 401 || response.status === 403) {
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
+    const location = response.headers.get('location') ?? '';
+    const match = location.match(/\/invitation\/([^/?]+)\//);
+    if (!match) {
+      throw new Error(
+        formatApiError(response.status, 'GET', '/plus/create/{id}/copy/', location, {
+          service: 'Evite',
+        }),
+      );
+    }
+    return { newEventId: match[1]!, customizeUrl: location };
   }
 }

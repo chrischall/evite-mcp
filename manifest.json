@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "evite-mcp",
+  "display_name": "Evite",
+  "version": "0.1.0",
+  "description": "Evite tools for Claude — list events, view guest lists & RSVPs, RSVP, message guests, and create/edit events",
+  "author": {
+    "name": "Chris Chall",
+    "email": "chris.c.hall@gmail.com",
+    "url": "https://github.com/chrischall"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrischall/evite-mcp"
+  },
+  "homepage": "https://github.com/chrischall/evite-mcp",
+  "support": "https://github.com/chrischall/evite-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "evite",
+    "invitations",
+    "events",
+    "rsvp",
+    "guests",
+    "party"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/bundle.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/bundle.js"
+      ],
+      "env": {
+        "EVITE_EMAIL": "${user_config.evite_email}",
+        "EVITE_PASSWORD": "${user_config.evite_password}",
+        "EVITE_SESSION_COOKIE": "${user_config.evite_session_cookie}"
+      }
+    }
+  },
+  "user_config": {
+    "evite_email": {
+      "type": "string",
+      "title": "Evite Email",
+      "description": "Your Evite login email address. Optional — if omitted (or paired with EVITE_SESSION_COOKIE), the server falls back to a raw session cookie or the fetchproxy browser bridge (requires being signed in to evite.com in your browser).",
+      "required": false
+    },
+    "evite_password": {
+      "type": "string",
+      "title": "Evite Password",
+      "description": "Your Evite password. Optional — see Evite Email. Only used for the headless email/password login (POST /ajax_login).",
+      "required": false,
+      "sensitive": true
+    },
+    "evite_session_cookie": {
+      "type": "string",
+      "title": "Evite Session Cookie",
+      "description": "A raw `cookie:` header copied from a signed-in evite.com tab (alternative to email/password). Used verbatim. Optional.",
+      "required": false,
+      "sensitive": true
+    }
+  },
+  "tools": [
+    { "name": "evite_list_events", "description": "List your Evite events (host + guest) with a totals breakdown" },
+    { "name": "evite_get_event", "description": "Get single-event detail (event, settings, location)" },
+    { "name": "evite_list_guests", "description": "List an event's guests and their RSVP responses" },
+    { "name": "evite_rsvp_summary", "description": "Get just the RSVP summary (yes/no/maybe/noReply + head counts)" },
+    { "name": "evite_list_messages", "description": "List the event's Messages thread" },
+    { "name": "evite_list_templates", "description": "Discover invitation template slugs for create_event" },
+    { "name": "evite_rsvp", "description": "RSVP for a guest (confirm-gated)" },
+    { "name": "evite_send_message", "description": "Send a private message to one guest (confirm-gated)" },
+    { "name": "evite_create_event", "description": "Create an event draft (confirm-gated)" },
+    { "name": "evite_update_event", "description": "Edit an event (confirm-gated)" },
+    { "name": "evite_add_guest", "description": "Add guests to the draft list (confirm-gated)" },
+    { "name": "evite_update_guest", "description": "Edit a draft guest (confirm-gated)" },
+    { "name": "evite_remove_guest", "description": "Remove a draft guest (confirm-gated)" },
+    { "name": "evite_send", "description": "Send now — email the ready-to-send guests (confirm-gated)" },
+    { "name": "evite_cancel_event", "description": "Cancel an event / delete a draft (confirm-gated)" },
+    { "name": "evite_reinstate_event", "description": "Reinstate a cancelled event (confirm-gated)" },
+    { "name": "evite_healthcheck", "description": "Verify session auth + API reachability" }
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=22.5.0"
+    }
+  }
+}

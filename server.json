@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chrischall/evite-mcp",
+  "description": "Evite for Claude — list events, guest lists & RSVPs, RSVP, message guests, and create/edit events",
+  "repository": {
+    "url": "https://github.com/chrischall/evite-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "evite-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "EVITE_EMAIL",
+          "description": "Your Evite login email address. Optional — if omitted, the server falls back to a raw session cookie or the fetchproxy browser bridge (requires being signed in to evite.com).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "EVITE_PASSWORD",
+          "description": "Your Evite password. Optional — see EVITE_EMAIL.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

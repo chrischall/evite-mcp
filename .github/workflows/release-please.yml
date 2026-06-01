@@ -111,25 +111,17 @@ jobs:
           npm publish --access public --provenance
 
       # ─── modelcontextprotocol/registry (PulseMCP auto-ingests weekly) ───
-      # Pinned version + SHA-256 verification: this binary runs with access to the
-      # OIDC token, CLAWHUB_TOKEN, and GITHUB_TOKEN, so we never pull `releases/latest`
-      # unverified. The job runs on ubuntu-latest, so the linux/amd64 asset is fixed.
-      # Bump MCP_PUBLISHER_VERSION + MCP_PUBLISHER_SHA256 together (sha from the
-      # release's registry_<ver>_checksums.txt).
+      # Pinned + SHA-256-verified install via the shared fleet action (the binary
+      # runs with the OIDC token + CLAWHUB_TOKEN + GITHUB_TOKEN, so never an
+      # unverified `releases/latest`). Bump the pin once in mcp-utils, not here.
       - name: Install mcp-publisher
-        env:
-          MCP_PUBLISHER_VERSION: "1.7.9"
-          MCP_PUBLISHER_SHA256: "ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac"
-        run: |
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" -o mcp-publisher.tar.gz
-          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
-          tar xzf mcp-publisher.tar.gz mcp-publisher
+        uses: chrischall/mcp-utils/.github/actions/install-mcp-publisher@main
 
       - name: Authenticate to MCP Registry (OIDC)
-        run: ./mcp-publisher login github-oidc
+        run: mcp-publisher login github-oidc
 
       - name: Publish to MCP Registry
-        run: ./mcp-publisher publish
+        run: mcp-publisher publish
 
       # ─── ClawHub (OpenClaw skill registry) — conditional on CLAWHUB_TOKEN ───
       # GitHub Actions disallows `secrets.*` in step-level `if:`, so the

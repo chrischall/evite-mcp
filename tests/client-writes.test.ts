@@ -132,6 +132,29 @@ describe('EviteClient — updateEvent', () => {
   });
 });
 
+describe('EviteClient — cancelEvent (VERIFIED endpoint)', () => {
+  it('POSTs the /actions/cancel/ sub-path with an empty body + CSRF header', async () => {
+    const spy = mockFetch({ body: { ok: true } });
+    const client = newClient();
+    await client.cancelEvent('EVENTID0');
+
+    const url = spy.mock.calls[0]![0] as string;
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    // Confirmed live: POST /services/event/v1/{id}/actions/cancel/ → 202.
+    expect(url).toBe('https://www.evite.com/services/event/v1/EVENTID0/actions/cancel/');
+    expect(init.method).toBe('POST');
+    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    expect(bodyOf(spy)).toEqual({});
+  });
+
+  it('treats 202 Accepted as success (the status the action returns)', async () => {
+    const spy = mockFetch({ status: 202, rawBody: '' });
+    const client = newClient();
+    await expect(client.cancelEvent('EVENTID0')).resolves.toEqual({});
+    expect(spy).toHaveBeenCalledOnce();
+  });
+});
+
 describe('EviteClient — CSRF presence', () => {
   it('sends the CSRF header on every write (centralized in one place)', async () => {
     const spy = mockFetch({ body: {} }, { body: {} }, { body: {} }, { body: {} });

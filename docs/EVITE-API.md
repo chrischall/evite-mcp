@@ -74,35 +74,49 @@ attributes, registries, settings, charity, gifting, rendered, calendar, features
 ### 4. Messages — `GET /services/event/v1/{id}/posts/`
 → `{ posts: Post[] }` (the event's "Messages" tab; host/guest message thread).
 
-## Writes (resource locations known; payloads ASSUMED — not yet captured)
-All POST/PUT carry the **`csrftoken`** value as a CSRF header. Assumed header:
-**`X-CSRFToken`** — `csrftoken` is Django's default CSRF *cookie* name, so
-Django's default header `X-CSRFToken` is strongly indicated (centralized as
-`CSRF_HEADER` in `src/client.ts`; one-line change once verified).
-- **RSVP** — mutates a guest's response; target is the guest resource under
-  `/services/event/v1/{id}/guests/…` (assumed `POST`/`PUT` with
-  `rsvpResponse`, `numberOfAdults`, `numberOfKids`, optional comment — mirrors
-  the verified READ `Guest` shape).
-- **Send message** — `POST /services/event/v1/{id}/posts/` (the messages thread).
-- **Create / edit event** — under `/services/event/v1/…`; create is likely
-  multi-step (the site's create wizard).
+## Writes — convention VERIFIED, most payloads still ASSUMED
+All mutations carry the **`csrftoken`** cookie value as a CSRF header. Assumed
+header: **`X-CSRFToken`** — `csrftoken` is Django's default CSRF *cookie* name,
+so Django's default header `X-CSRFToken` is strongly indicated (centralized as
+`CSRF_HEADER` in `src/client.ts`).
 
-### Live-capture attempt — BLOCKED (2026-06-01)
-Tried a non-mutating capture (inject a `fetch`/XHR interceptor that records any
-`/services/` write's method+url+body+headers, then **aborts** it so nothing
-mutates). Could not exercise the write UIs in this account's current state:
-- **0 upcoming / 0 draft events** (76 past/archived) → the RSVP widget and the
-  message composer are not present/active on past events, so neither fires.
-- **create-on-load POSTs are uncatchable** this way — the injected interceptor
-  installs *after* page load, so a draft-create that fires during the customizer's
-  initial render happens before the hook is in place. Only a write fired from a
-  post-injection button click is interceptable.
-- Gallery design cards are React-handled (no navigable design `href`s), and event
-  IDs come back base64 (redacted in tool output), so the customizer can't be
-  reached deterministically.
-**To verify (issue #3):** redo the capture when the account has an upcoming or
-draft event (RSVP + send-message exercise cleanly there), or get explicit
-authorization for one reversible test write (e.g. toggle an RSVP and revert).
+### VERIFIED write convention (live capture 2026-06-01)
+Evite mutations are **action sub-paths**, not PUT/POST to the bare resource:
+> **`POST /services/event/v1/{id}/actions/{verb}/`** → **`202 Accepted`**
+
+Confirmed against the real **delete-draft** write:
+`POST /services/event/v1/{id}/actions/cancel/` (empty body) → `202`. This is the
+only fully-captured mutation and the template the others almost certainly follow.
+Implemented as the VERIFIED `EviteClient.cancelEvent()`.
+
+### Web routes (verified)
+- Guest/event view: **`/event/{ID}`** (`evite.me/<short>` redirects here).
+- Host dashboard: **`/event/{ID}/dashboard`** (+ `/dashboard/guests`).
+- Editor/customizer: **`/invitation/{ID}/{design|details|gifting|review|add-guests}`**.
+- My Events: **`/my-events/?status=upcoming|draft|archived…`** (draft delete is the
+  `⋯ → Delete draft` overflow → `actions/cancel/`).
+- Duplicate (from dashboard) creates a draft at `/invitation/{newID}` with
+  `?source_event={srcID}`. The Details form fields (the event-write shape) are:
+  `title`, `date` (`YYYY-MM-DD`, hidden) + time, `location`, `host`, `phone`,
+  `event_option_max_guests`, plus gifting/signup-list fields and a custom `question`.
+
+### Still UNVERIFIED (issue #3) — follow the verified `/actions/{verb}/` convention
+- **RSVP** — guest-response mutation; likely `…/guests/{guestId}/actions/…` or an
+  `…/actions/rsvp/` with `rsvpResponse`/`numberOfAdults`/`numberOfKids`/comment
+  (mirrors the verified READ `Guest` shape).
+- **Send message** — `…/posts/` (or `…/actions/post/`); body `{ message }`.
+- **Create / update event** — the editor "Save & exit" posts OUTSIDE `/services/`
+  (a different API base) and is validation-gated; create proper still needs a capture.
+
+### Capture methodology (lesson learned)
+**Read writes at the browser/network layer (`read_network_requests`), NOT via an
+in-page `fetch`/XHR monkeypatch** — Evite's SPA closes over `fetch` at module load,
+so a late-injected wrapper never sees its calls (every in-page hook this session
+captured 0 writes; the browser network log captured the `actions/cancel/` write
+cleanly). What blocked the other three: RSVP has no host-edit-guest affordance in
+the UI; send-message would notify the event's real (20) guests; create's save
+posts off-`/services/`. Re-capture each when an **upcoming/draft event** exists or
+with a guest present on a throwaway draft.
 
 ## Resolved spec Open Questions
 - REST not GraphQL; base `/services/`, `events` (list) vs `event` (single).

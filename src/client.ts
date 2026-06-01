@@ -214,8 +214,16 @@ export class EviteClient {
   //
   // SAFETY: these are the ONLY methods that mutate Evite. They are reached only
   // when a write tool is called with `confirm: true` — the default path returns
-  // a dry-run preview without ever touching the network. Every payload below is
-  // UNVERIFIED (no live capture exists); see issue #3.
+  // a dry-run preview without ever touching the network.
+  //
+  // VERIFIED CONVENTION (live capture 2026-06-01): Evite mutations are action
+  // sub-paths, `POST /services/event/v1/{id}/actions/{verb}/`, returning 202
+  // Accepted — NOT a PUT/POST to the bare resource. Confirmed against the real
+  // "delete draft" write: `POST …/actions/cancel/` → 202. {@link cancelEvent} is
+  // therefore VERIFIED; rsvp/sendMessage/createEvent/updateEvent payloads remain
+  // UNVERIFIED but are most likely the same `/actions/{verb}/` family (issue #3).
+  // Capture note: read these at the browser/network layer — Evite's SPA closes
+  // over `fetch` at load, so an in-page monkeypatch never sees its calls.
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
@@ -308,5 +316,21 @@ export class EviteClient {
    */
   async updateEvent(eventId: string, patch: UpdateEventPatch): Promise<unknown> {
     return this.write('PUT', `/services/event/v1/${encodeURIComponent(eventId)}`, { ...patch });
+  }
+
+  /**
+   * Cancel an event (also the "delete draft" action) —
+   * `POST /services/event/v1/{id}/actions/cancel/`, empty body, → 202 Accepted.
+   *
+   * VERIFIED against a live write capture (2026-06-01): this is the exact request
+   * the site issues to remove a draft. The only confirmed mutating endpoint, and
+   * the template for the `/actions/{verb}/` convention the other writes follow.
+   */
+  async cancelEvent(eventId: string): Promise<unknown> {
+    return this.write(
+      'POST',
+      `/services/event/v1/${encodeURIComponent(eventId)}/actions/cancel/`,
+      {},
+    );
   }
 }

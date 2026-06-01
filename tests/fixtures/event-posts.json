@@ -1,0 +1,14 @@
+{
+  "_note": "Best-effort post shape (writes spike not yet run). Refine when the writes spike captures posts precisely. Endpoint confirmed: GET /services/event/v1/{id}/posts/.",
+  "endpoint": "GET /services/event/v1/{event_id}/posts/",
+  "response": {
+    "posts": [
+      {
+        "id": "POST0",
+        "authorName": "Sample Host",
+        "message": "See you there!",
+        "created": "2026-05-20T12:00:00.000Z"
+      }
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "_note": "Shape captured from GET /services/event/v1/{id} via the discovery spike (2026-05-31). Real field names/types/enums; values are synthetic (no real PII).",
+  "endpoint": "GET /services/event/v1/{event_id}",
+  "response": {
+    "event": {
+      "id": "EVENTID0",
+      "title": "Sample Host Event",
+      "message": "Come celebrate with us!",
+      "startDatetime": "2026-05-29T15:30:00.000Z",
+      "endDatetime": "2026-05-29T20:00:00.000Z",
+      "knownTimezoneName": "America/New_York",
+      "knownTimezoneAbbreviation": "ET",
+      "eventHostName": "Sample Host",
+      "eventPhoneNumber": null,
+      "hostId": "HOSTID0",
+      "hostIds": ["HOSTID0"],
+      "status": "past",
+      "isPast": true,
+      "eventType": "invitation",
+      "category": "birthday",
+      "superCategory": "celebration",
+      "templateName": "poolfloaties_ani",
+      "origin": 21,
+      "isFabricPremium": false,
+      "shareableLink": "https://evite.me/XXXXXX",
+      "sendOn": "2026-05-20T12:00:00.000Z"
+    },
+    "settings": {
+      "enableMaybe": true,
+      "privateGuestList": false,
+      "headCountByFamily": false,
+      "plusOne": true,
+      "maxEventCapacity": 50,
+      "allowViewMap": true,
+      "showGifting": false,
+      "rsvpBy": "2026-05-28T00:00:00.000Z",
+      "strictRsvpBy": false,
+      "enableHostPhotoGallery": true,
+      "enablePhotoSharing": true,
+      "allowGuestNumber": true,
+      "rsvpOff": false
+    },
+    "location": {
+      "location_name": "Venue",
+      "street_address": "123 Main St",
+      "city": "City",
+      "state": "ST",
+      "zip_code": "00000"
+    }
+  }
+}

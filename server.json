@@ -28,6 +28,13 @@
           "isRequired": false,
           "format": "string",
           "isSecret": true
+        },
+        {
+          "name": "EVITE_SESSION_COOKIE",
+          "description": "A raw `cookie:` header copied from a signed-in evite.com tab (alternative to email/password). Used verbatim. Optional.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
         }
       ]
     }

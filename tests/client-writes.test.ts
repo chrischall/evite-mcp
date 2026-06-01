@@ -124,6 +124,42 @@ describe('EviteClient — addGuest (VERIFIED endpoint)', () => {
   });
 });
 
+describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () => {
+  it('PATCHes the draft endpoint with the full guest object', async () => {
+    const spy = mockFetch({ body: { ok: true } });
+    const client = newClient();
+    await client.updateGuest('EVENTID0', 'GUEST9', { name: 'Renamed', email: 'r@example.com' });
+
+    const url = spy.mock.calls[0]![0] as string;
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(url).toBe('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/');
+    expect(init.method).toBe('PATCH');
+    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    // Verified live: PATCH body = {guest_id, event_id, invite_method, name, email, phone}.
+    expect(JSON.parse(init.body as string)).toEqual({
+      guest_id: 'GUEST9',
+      event_id: 'EVENTID0',
+      invite_method: 'email',
+      name: 'Renamed',
+      email: 'r@example.com',
+      phone: '',
+    });
+  });
+
+  it('DELETEs the per-guest draft path with no body', async () => {
+    const spy = mockFetch({ body: { ok: true } });
+    const client = newClient();
+    await client.removeGuest('EVENTID0', 'GUEST9');
+
+    const url = spy.mock.calls[0]![0] as string;
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(url).toBe('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/GUEST9');
+    expect(init.method).toBe('DELETE');
+    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    expect(init.body).toBeUndefined();
+  });
+});
+
 describe('EviteClient — createEvent', () => {
   it('POSTs /services/event/v1/ with the input nested under `event`', async () => {
     const spy = mockFetch({ body: { event: { id: 'NEW' } } });

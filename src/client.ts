@@ -90,6 +90,13 @@ export interface GuestDraft {
   email: string;
 }
 
+/** New values for a draft guest ({@link EviteClient.updateGuest}). */
+export interface GuestPatch {
+  name: string;
+  email: string;
+  phone?: string;
+}
+
 /**
  * Event-create input. The create API requires `title`, `startDatetime`, and
  * `templateName` (extra keys are passed through under the `event` envelope).
@@ -310,10 +317,11 @@ export class EviteClient {
    * single, centralized place that header is set. Error mapping mirrors {@link get}.
    */
   private async write<T>(
-    method: 'POST' | 'PUT' | 'PATCH',
+    method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     path: string,
     // `unknown` (not just an object): the add-guest write sends a top-level JSON array.
-    body: unknown,
+    // `undefined` → no request body (e.g. the DELETE remove-guest call).
+    body?: unknown,
   ): Promise<T> {
     const session = await this.getSession();
     const url = `${BASE_URL}${path}`;
@@ -323,10 +331,13 @@ export class EviteClient {
       accept: 'application/json',
       'content-type': 'application/json',
     };
-    // TODO(verify): confirm CSRF header name with a live write capture (issue #3).
     if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
 
-    const response = await fetch(url, { method, headers, body: JSON.stringify(body) });
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
 
     if (response.status === 401 || response.status === 403) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
@@ -400,6 +411,39 @@ export class EviteClient {
       'POST',
       `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`,
       guests,
+    );
+  }
+
+  /**
+   * Edit a draft (un-sent) guest's name / email / phone —
+   * **`PATCH /ajax/event/{id}/guestlist/draft/`** → `200`.
+   *
+   * VERIFIED (live capture 2026-06-01): the site issues this PATCH with the full
+   * guest object `{guest_id, email, name, phone, event_id, invite_method}`; the
+   * `guest_id` selects the guest, the other fields are the new values.
+   */
+  async updateGuest(eventId: string, guestId: string, patch: GuestPatch): Promise<unknown> {
+    return this.write('PATCH', `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`, {
+      guest_id: guestId,
+      event_id: eventId,
+      invite_method: 'email',
+      name: patch.name,
+      email: patch.email,
+      phone: patch.phone ?? '',
+    });
+  }
+
+  /**
+   * Remove a draft (un-sent) guest —
+   * **`DELETE /ajax/event/{id}/guestlist/draft/{guestId}`** (no body) → `200`.
+   *
+   * VERIFIED (live capture 2026-06-01): the guest-list "trash" control issues
+   * exactly this DELETE.
+   */
+  async removeGuest(eventId: string, guestId: string): Promise<unknown> {
+    return this.write(
+      'DELETE',
+      `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/${encodeURIComponent(guestId)}`,
     );
   }
 

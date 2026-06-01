@@ -16,13 +16,18 @@ const BASE_URL = 'https://www.evite.com';
  *
  * Evite's frontend exposes the token as the `csrftoken` cookie (and
  * `window.fetchproxyCsrf`); the exact header NAME it echoes back on mutating
- * requests was never captured (capturing it needs a real compose-and-submit).
+ * requests was never captured (capturing it needs a real compose-and-submit,
+ * which the live-capture session could not exercise — see issue #3).
+ *
+ * Best-informed assumption: `csrftoken` is Django's default CSRF *cookie* name
+ * (`CSRF_COOKIE_NAME`), so Django's default CSRF *header* `X-CSRFToken`
+ * (`CSRF_HEADER_NAME = HTTP_X_CSRFTOKEN`) is the strongly-indicated header.
  *
  * TODO(verify): confirm CSRF header name with a live write capture (issue #3).
  * Centralized here so flipping it to whatever the capture reveals (e.g.
- * `x-csrftoken`, or moving it into the body as a field) is a one-line change.
+ * `X-CSRF-Token`, or moving it into the body as a field) is a one-line change.
  */
-export const CSRF_HEADER = 'x-csrf-token';
+export const CSRF_HEADER = 'X-CSRFToken';
 
 /** Health report surfaced by the `evite_healthcheck` tool. */
 export interface EviteHealth {

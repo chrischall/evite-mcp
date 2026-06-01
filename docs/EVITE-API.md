@@ -74,15 +74,35 @@ attributes, registries, settings, charity, gifting, rendered, calendar, features
 ### 4. Messages — `GET /services/event/v1/{id}/posts/`
 → `{ posts: Post[] }` (the event's "Messages" tab; host/guest message thread).
 
-## Writes (resource locations known; capture payloads when implementing)
-All POST/PUT with the **`csrftoken`** value as the CSRF header/field (exact header
-TBD from one compose-capture — compose, inspect the request, do NOT submit):
+## Writes (resource locations known; payloads ASSUMED — not yet captured)
+All POST/PUT carry the **`csrftoken`** value as a CSRF header. Assumed header:
+**`X-CSRFToken`** — `csrftoken` is Django's default CSRF *cookie* name, so
+Django's default header `X-CSRFToken` is strongly indicated (centralized as
+`CSRF_HEADER` in `src/client.ts`; one-line change once verified).
 - **RSVP** — mutates a guest's response; target is the guest resource under
-  `/services/event/v1/{id}/guests/…` (likely `POST`/`PUT` with
-  `rsvpResponse`, `numberOfAdults`, `numberOfKids`, optional comment).
+  `/services/event/v1/{id}/guests/…` (assumed `POST`/`PUT` with
+  `rsvpResponse`, `numberOfAdults`, `numberOfKids`, optional comment — mirrors
+  the verified READ `Guest` shape).
 - **Send message** — `POST /services/event/v1/{id}/posts/` (the messages thread).
 - **Create / edit event** — under `/services/event/v1/…`; create is likely
-  multi-step (the site's create wizard). Capture by walking one wizard step.
+  multi-step (the site's create wizard).
+
+### Live-capture attempt — BLOCKED (2026-06-01)
+Tried a non-mutating capture (inject a `fetch`/XHR interceptor that records any
+`/services/` write's method+url+body+headers, then **aborts** it so nothing
+mutates). Could not exercise the write UIs in this account's current state:
+- **0 upcoming / 0 draft events** (76 past/archived) → the RSVP widget and the
+  message composer are not present/active on past events, so neither fires.
+- **create-on-load POSTs are uncatchable** this way — the injected interceptor
+  installs *after* page load, so a draft-create that fires during the customizer's
+  initial render happens before the hook is in place. Only a write fired from a
+  post-injection button click is interceptable.
+- Gallery design cards are React-handled (no navigable design `href`s), and event
+  IDs come back base64 (redacted in tool output), so the customizer can't be
+  reached deterministically.
+**To verify (issue #3):** redo the capture when the account has an upcoming or
+draft event (RSVP + send-message exercise cleanly there), or get explicit
+authorization for one reversible test write (e.g. toggle an RSVP and revert).
 
 ## Resolved spec Open Questions
 - REST not GraphQL; base `/services/`, `events` (list) vs `event` (single).

@@ -104,6 +104,38 @@ describe('EviteClient — sendMessage (VERIFIED endpoint)', () => {
   });
 });
 
+describe('EviteClient — broadcast (VERIFIED endpoint)', () => {
+  it('POSTs the /tsunami/ broadcast endpoint with message + virtual_groups + null captcha', async () => {
+    const spy = mockFetch({ body: { ok: true } });
+    const client = newClient();
+    await client.broadcast('EVENTID0', {
+      message: 'See you Saturday!',
+      groups: ['yes', 'maybe'],
+      participantCount: 4,
+    });
+
+    const url = spy.mock.calls[0]![0] as string;
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    // Verified live (captured curl 2026-06-01): the host "Message guests" broadcast
+    // hits the /tsunami/ messaging service's /broadcast/ path (NOT per-guest).
+    expect(url).toBe('https://www.evite.com/tsunami/v1/services/event/EVENTID0/broadcast/');
+    expect(init.method).toBe('POST');
+    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    const body = bodyOf(spy);
+    expect(body.message).toBe('See you Saturday!');
+    expect(body.virtual_groups).toEqual(['yes', 'maybe']);
+    expect(body.captcha).toBeNull();
+    expect(body.participantCount).toBe(4);
+  });
+
+  it('omits participantCount when not provided', async () => {
+    const spy = mockFetch({ body: { ok: true } });
+    const client = newClient();
+    await client.broadcast('E', { message: 'hi', groups: ['no'] });
+    expect(bodyOf(spy)).not.toHaveProperty('participantCount');
+  });
+});
+
 describe('EviteClient — addGuest (VERIFIED endpoint)', () => {
   it('POSTs the guestlist/draft endpoint with a TOP-LEVEL JSON ARRAY of guests', async () => {
     const spy = mockFetch({ body: { ok: true } });

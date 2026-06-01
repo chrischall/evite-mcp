@@ -54,6 +54,22 @@ const sendMessageArgs = z.object({
   confirm: schemaConfirm,
 });
 
+const broadcastArgs = z.object({
+  event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
+  message: z.string().min(1).describe('Message text to broadcast to the selected RSVP segments.'),
+  groups: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe("RSVP segments to send to, e.g. ['yes','no','maybe']."),
+  participant_count: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe('Optional recipient count the web UI sends along (informational).'),
+  confirm: schemaConfirm,
+});
+
 const createEventArgs = z.object({
   title: z.string().min(1).describe('Event title.'),
   start_datetime: z.string().min(1).describe('Start datetime (ISO 8601, event-local). Required.'),
@@ -161,6 +177,35 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         );
       }
       const data = await client.sendMessage(args.event_id, args.guest_id, { message: args.message });
+      return textResult(data);
+    },
+  );
+
+  server.registerTool(
+    'evite_broadcast',
+    {
+      description:
+        'Broadcast a message to whole RSVP segments of an Evite event at once (e.g. everyone ' +
+        'who replied yes/maybe). This really emails every guest in those segments. ' +
+        'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing.',
+      annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false }),
+      inputSchema: broadcastArgs.shape,
+    },
+    async (raw) => {
+      const args = broadcastArgs.parse(raw);
+      if (args.confirm !== true) {
+        return preview('broadcast', {
+          event_id: args.event_id,
+          message: args.message,
+          groups: args.groups,
+          participant_count: args.participant_count,
+        });
+      }
+      const data = await client.broadcast(args.event_id, {
+        message: args.message,
+        groups: args.groups,
+        participantCount: args.participant_count,
+      });
       return textResult(data);
     },
   );

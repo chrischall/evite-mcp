@@ -11,6 +11,19 @@ export type SessionResolver = (opts?: ResolveSessionOptions) => Promise<Resolved
 /** Base host for Evite's internal `/services/` API. */
 const BASE_URL = 'https://www.evite.com';
 
+/**
+ * The request header carrying the CSRF token on writes.
+ *
+ * Evite's frontend exposes the token as the `csrftoken` cookie (and
+ * `window.fetchproxyCsrf`); the exact header NAME it echoes back on mutating
+ * requests was never captured (capturing it needs a real compose-and-submit).
+ *
+ * TODO(verify): confirm CSRF header name with a live write capture (issue #3).
+ * Centralized here so flipping it to whatever the capture reveals (e.g.
+ * `x-csrftoken`, or moving it into the body as a field) is a one-line change.
+ */
+export const CSRF_HEADER = 'x-csrf-token';
+
 /** Health report surfaced by the `evite_healthcheck` tool. */
 export interface EviteHealth {
   ok: boolean;
@@ -50,6 +63,40 @@ export interface ListGuestsResult {
 /** Shape of the posts endpoint response: `{ posts }`. */
 export interface ListMessagesResult {
   posts: unknown[];
+}
+
+/** An RSVP response value (mirrors the read `rsvpResponse` field). */
+export type RsvpResponse = 'yes' | 'no' | 'maybe';
+
+/** Arguments to {@link EviteClient.rsvp}. */
+export interface RsvpInput {
+  response: RsvpResponse;
+  numberOfAdults: number;
+  numberOfKids: number;
+  /** Optional note/comment (maps to the guest `comments` field). */
+  note?: string;
+}
+
+/** Arguments to {@link EviteClient.sendMessage}. */
+export interface SendMessageInput {
+  message: string;
+}
+
+/**
+ * Best-effort event-create input. The real create flow is the site's multi-step
+ * wizard; this single-POST shape is a placeholder until the wizard is captured.
+ */
+export interface CreateEventInput {
+  title: string;
+  startDatetime?: string;
+  endDatetime?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** A partial patch for {@link EviteClient.updateEvent}. */
+export interface UpdateEventPatch {
+  [key: string]: unknown;
 }
 
 /** Injectable dependencies (tests inject a fake session resolver). */
@@ -155,5 +202,106 @@ export class EviteClient {
   /** `GET /services/event/v1/{id}/posts/` — the event's "Messages" thread. */
   async listMessages(eventId: string): Promise<ListMessagesResult> {
     return this.get<ListMessagesResult>(`/services/event/v1/${encodeURIComponent(eventId)}/posts/`);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Writes
+  //
+  // SAFETY: these are the ONLY methods that mutate Evite. They are reached only
+  // when a write tool is called with `confirm: true` — the default path returns
+  // a dry-run preview without ever touching the network. Every payload below is
+  // UNVERIFIED (no live capture exists); see issue #3.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Issue an authenticated mutating request (POST/PUT). The CSRF token (when the
+   * session resolved one) is attached via {@link CSRF_HEADER} — the single,
+   * centralized place that header is set, so adjusting it after a live capture
+   * is one edit. Error mapping mirrors {@link get}.
+   */
+  private async write<T>(
+    method: 'POST' | 'PUT',
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<T> {
+    const session = await this.getSession();
+    const url = `${BASE_URL}${path}`;
+
+    const headers: Record<string, string> = {
+      cookie: session.cookieHeader,
+      accept: 'application/json',
+      'content-type': 'application/json',
+    };
+    // TODO(verify): confirm CSRF header name with a live write capture (issue #3).
+    if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
+
+    const response = await fetch(url, { method, headers, body: JSON.stringify(body) });
+
+    if (response.status === 401 || response.status === 403) {
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(formatApiError(response.status, method, path, text, { service: 'Evite' }));
+    }
+
+    return (await response.json().catch(() => ({}))) as T;
+  }
+
+  /**
+   * RSVP for a guest — mutates the guest resource under
+   * `POST /services/event/v1/{id}/guests/{guestId}`.
+   *
+   * UNVERIFIED payload — see issue #3. Field names (`rsvpResponse`,
+   * `numberOfAdults`, `numberOfKids`, `comments`) mirror the confirmed READ
+   * guest shape, but the write contract (method, exact keys) is a guess until a
+   * live compose-capture confirms it.
+   */
+  async rsvp(eventId: string, guestId: string, input: RsvpInput): Promise<unknown> {
+    const body: Record<string, unknown> = {
+      rsvpResponse: input.response,
+      numberOfAdults: input.numberOfAdults,
+      numberOfKids: input.numberOfKids,
+    };
+    if (input.note !== undefined) body.comments = input.note;
+    return this.write(
+      'POST',
+      `/services/event/v1/${encodeURIComponent(eventId)}/guests/${encodeURIComponent(guestId)}`,
+      body,
+    );
+  }
+
+  /**
+   * Post a message to the event's Messages thread —
+   * `POST /services/event/v1/{id}/posts/`.
+   *
+   * UNVERIFIED payload — see issue #3. The endpoint is the confirmed READ posts
+   * location; the write body (`{ message }`) is unconfirmed.
+   */
+  async sendMessage(eventId: string, input: SendMessageInput): Promise<unknown> {
+    return this.write('POST', `/services/event/v1/${encodeURIComponent(eventId)}/posts/`, {
+      message: input.message,
+    });
+  }
+
+  /**
+   * Create an event — `POST /services/event/v1/`.
+   *
+   * UNVERIFIED payload — see issue #3. NOTE: the real site flow is a multi-step
+   * create wizard; this single POST is a best-effort placeholder and will likely
+   * need to walk multiple wizard steps once captured.
+   */
+  async createEvent(input: CreateEventInput): Promise<unknown> {
+    return this.write('POST', '/services/event/v1/', { ...input });
+  }
+
+  /**
+   * Edit an event — `PUT /services/event/v1/{id}` with a partial patch.
+   *
+   * UNVERIFIED payload — see issue #3. Method (PUT vs PATCH) and accepted keys
+   * are unconfirmed.
+   */
+  async updateEvent(eventId: string, patch: UpdateEventPatch): Promise<unknown> {
+    return this.write('PUT', `/services/event/v1/${encodeURIComponent(eventId)}`, { ...patch });
   }
 }

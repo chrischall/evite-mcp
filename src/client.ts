@@ -84,6 +84,15 @@ export interface SendMessageInput {
   message: string;
 }
 
+/** Arguments to {@link EviteClient.broadcast}. */
+export interface BroadcastInput {
+  message: string;
+  /** RSVP segments to broadcast to, e.g. ['yes', 'no', 'maybe']. */
+  groups: string[];
+  /** Recipient count the web UI sends along (informational); optional. */
+  participantCount?: number;
+}
+
 /** A guest to add to an event's draft guest list ({@link EviteClient.addGuest}). */
 export interface GuestDraft {
   name: string;
@@ -400,6 +409,31 @@ export class EviteClient {
       'POST',
       `/tsunami/v1/services/event/${encodeURIComponent(eventId)}/guest/${encodeURIComponent(guestId)}/messages`,
       { message: input.message },
+    );
+  }
+
+  /**
+   * Broadcast a message to whole RSVP segments at once —
+   * **`POST /tsunami/v1/services/event/{eventId}/broadcast/`**.
+   *
+   * VERIFIED endpoint + body (captured curl 2026-06-01): the host "Message guests"
+   * broadcast hits the `/tsunami/` messaging service's `/broadcast/` path (NOT the
+   * per-guest `…/guest/{id}/messages` of {@link sendMessage}). The body is
+   * `{ message, captcha: null, participantCount?, virtual_groups: [...] }`, where
+   * `virtual_groups` names the RSVP segments to reach (e.g. `['yes','maybe']`).
+   * This really emails every guest in those segments.
+   */
+  async broadcast(eventId: string, input: BroadcastInput): Promise<unknown> {
+    const body: Record<string, unknown> = {
+      message: input.message,
+      captcha: null,
+      virtual_groups: input.groups,
+    };
+    if (input.participantCount !== undefined) body.participantCount = input.participantCount;
+    return this.write(
+      'POST',
+      `/tsunami/v1/services/event/${encodeURIComponent(eventId)}/broadcast/`,
+      body,
     );
   }
 

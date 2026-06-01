@@ -6,12 +6,18 @@
 // layer using the session cookies a signed-in browser holds. `resolveSession()`
 // produces the `cookie` header those calls need, in priority order:
 //
-//   1. EVITE_SESSION_COOKIE (raw cookie header)
+//   1. EVITE_EMAIL + EVITE_PASSWORD (tier-1 form login) — PREFERRED
+//      Headless email/password login: POST the creds to /ajax_login and build
+//      the session from the response Set-Cookie jar (see src/auth-login.ts).
+//      This is the user's documented default ("username/password first") — it
+//      needs no browser bridge and no hand-copied cookie. Both vars must be set.
+//
+//   2. EVITE_SESSION_COOKIE (raw cookie header)
 //      A pre-baked `cookie:` header string the user pasted from their browser
 //      (or set in CI). Used verbatim — no bootstrap, no parsing. The escape
 //      hatch for headless environments where the browser bridge can't apply.
 //
-//   2. fetchproxy fallback
+//   3. fetchproxy fallback
 //      Lift the session out of the user's already-signed-in evite.com tab.
 //      `@fetchproxy/bootstrap` opens a one-shot WebSocket bridge, reads the
 //      declared cookies (x-evite-session / evtsession / x-evite-features /
@@ -21,19 +27,17 @@
 //
 //      Opt out with EVITE_DISABLE_FETCHPROXY=1 (headless CI).
 //
-//   3. Error
+//   4. Error
 //      Nothing to authenticate with → SessionNotAuthenticatedError with an
-//      actionable hint naming both escape hatches.
-//
-// DEFERRED (#2): tier-1 email/password form login. It would slot in as a path
-// between (1) and (2) — capture the login POST, hydrate the same cookies — so
-// the resolver shape here is intentionally path-ordered to accommodate it.
+//      actionable hint naming the escape hatches.
 //
 // Testability: `@fetchproxy/bootstrap` is mocked at the module boundary in
-// tests/auth.test.ts. No other test imports `bootstrap`.
+// tests/auth.test.ts; the tier-1 login accepts an injectable `fetchImpl` so
+// tests never hit the network.
 
 import { bootstrap } from '@fetchproxy/bootstrap';
 import { readEnvVar, parseBoolEnv, SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
+import { loginWithPassword, type FetchImpl } from './auth-login.js';
 
 /** Server identity reported to the fetchproxy bridge. */
 const SERVER_NAME = 'evite-mcp';
@@ -61,10 +65,12 @@ export interface ResolvedSession {
   csrfToken?: string;
 }
 
-/** Options for {@link resolveSession} (reserved for future paths, e.g. login). */
+/** Options for {@link resolveSession}. */
 export interface ResolveSessionOptions {
   /** Override the env source (tests). Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /** Injectable fetch for the tier-1 login path (tests). Defaults to global `fetch`. */
+  fetchImpl?: FetchImpl;
 }
 
 function fetchproxyDisabled(env?: NodeJS.ProcessEnv): boolean {
@@ -83,13 +89,21 @@ function notAuthed(): never {
 export async function resolveSession(opts: ResolveSessionOptions = {}): Promise<ResolvedSession> {
   const env = opts.env;
 
-  // ── Path 1: raw cookie header from the environment.
+  // ── Path 1 (tier-1, preferred): email/password form login → /ajax_login.
+  // Both vars must be set; one alone falls through to the cookie/bridge tiers.
+  const email = readEnvVar('EVITE_EMAIL', { env });
+  const password = readEnvVar('EVITE_PASSWORD', { env });
+  if (email && password) {
+    return loginWithPassword(email, password, opts.fetchImpl);
+  }
+
+  // ── Path 2: raw cookie header from the environment.
   const rawCookie = readEnvVar('EVITE_SESSION_COOKIE', { env });
   if (rawCookie) {
     return { cookieHeader: rawCookie };
   }
 
-  // ── Path 2: fetchproxy fallback.
+  // ── Path 3: fetchproxy fallback.
   if (!fetchproxyDisabled(env)) {
     let session: { cookies?: Record<string, string> };
     try {
@@ -129,6 +143,6 @@ export async function resolveSession(opts: ResolveSessionOptions = {}): Promise<
     return resolved;
   }
 
-  // ── Path 3: nothing configured and fetchproxy explicitly disabled.
+  // ── Path 4: nothing configured and fetchproxy explicitly disabled.
   notAuthed();
 }

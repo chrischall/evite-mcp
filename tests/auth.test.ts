@@ -19,7 +19,22 @@ vi.mock('@fetchproxy/bootstrap', () => ({
 import { resolveSession } from '../src/auth.js';
 import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
 
-const ENV_KEYS = ['EVITE_SESSION_COOKIE', 'EVITE_DISABLE_FETCHPROXY'] as const;
+const ENV_KEYS = [
+  'EVITE_SESSION_COOKIE',
+  'EVITE_DISABLE_FETCHPROXY',
+  'EVITE_EMAIL',
+  'EVITE_PASSWORD',
+] as const;
+
+/** A `Response`-like stub exposing getSetCookie(), used by the tier-1 path. */
+function loginResponse(setCookies: string[]): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: { getSetCookie: () => setCookies },
+    json: async () => ({}),
+  } as unknown as Response;
+}
 
 describe('resolveSession', () => {
   const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
@@ -39,7 +54,67 @@ describe('resolveSession', () => {
     }
   });
 
-  describe('path 1: EVITE_SESSION_COOKIE', () => {
+  describe('path 1 (tier-1): EVITE_EMAIL + EVITE_PASSWORD → /ajax_login', () => {
+    it('prefers email/password when both env vars are set (no cookie env, no bootstrap)', async () => {
+      process.env.EVITE_EMAIL = 'user@example.com';
+      process.env.EVITE_PASSWORD = 'pw';
+      const fetchImpl = vi.fn(async () =>
+        loginResponse([
+          'x-evite-session=s; Path=/',
+          'evtsession=e; Path=/',
+          'csrftoken=c; Path=/',
+          'x-evite-features=f; Path=/',
+        ]),
+      );
+
+      const result = await resolveSession({ fetchImpl });
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl.mock.calls[0]![0]).toBe('https://www.evite.com/ajax_login');
+      expect(bootstrapMock).not.toHaveBeenCalled();
+      expect(result.cookieHeader).toContain('x-evite-session=s');
+      expect(result.csrfToken).toBe('c');
+    });
+
+    it('takes precedence over EVITE_SESSION_COOKIE when both are present', async () => {
+      process.env.EVITE_EMAIL = 'user@example.com';
+      process.env.EVITE_PASSWORD = 'pw';
+      process.env.EVITE_SESSION_COOKIE = 'x-evite-session=from-env';
+      const fetchImpl = vi.fn(async () =>
+        loginResponse(['x-evite-session=from-login; Path=/', 'evtsession=e; Path=/']),
+      );
+
+      const result = await resolveSession({ fetchImpl });
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(result.cookieHeader).toContain('x-evite-session=from-login');
+      expect(result.cookieHeader).not.toContain('from-env');
+    });
+
+    it('falls through to EVITE_SESSION_COOKIE when only one credential var is set', async () => {
+      process.env.EVITE_EMAIL = 'user@example.com';
+      // no EVITE_PASSWORD
+      process.env.EVITE_SESSION_COOKIE = 'x-evite-session=env';
+      const fetchImpl = vi.fn();
+
+      const result = await resolveSession({ fetchImpl });
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(result.cookieHeader).toBe('x-evite-session=env');
+    });
+
+    it('falls through to fetchproxy when no credentials and no cookie env', async () => {
+      const fetchImpl = vi.fn();
+      bootstrapMock.mockResolvedValue({ cookies: { 'x-evite-session': 's', evtsession: 'e' } });
+
+      await resolveSession({ fetchImpl });
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(bootstrapMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('path 2: EVITE_SESSION_COOKIE', () => {
     it('uses the raw cookie header verbatim and does not call bootstrap', async () => {
       process.env.EVITE_SESSION_COOKIE = 'x-evite-session=s; evtsession=e';
       const result = await resolveSession();

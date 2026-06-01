@@ -18,6 +18,19 @@
   These are what the fetchproxy bootstrap declares / a headless form-login captures.
 - **CSRF** (writes): cookie **`csrftoken`** (also exposed as `window.fetchproxyCsrf`
   — Evite's internal name, unrelated to our `@fetchproxy`).
+
+### Tier-1 email/password login — CAPTURED (2026-06-01)
+- **`POST https://www.evite.com/ajax_login`**, JSON body `{ "email", "password" }`
+  (no CSRF token required on the login request itself).
+- On 200 the response **sets the session cookies** (`x-evite-session`,
+  `evtsession`, `csrftoken`, `x-evite-features`) via `Set-Cookie`, and returns a
+  JSON body: `{ full_name, first_name, initials, user_id, email, image_url,
+  avatar_disk, subscription_plan_name, token }`. The `token` + the cookies are
+  the session.
+- Headless flow: POST creds → keep the `Set-Cookie` jar → send those cookies on
+  every subsequent `/services/…` call (same cookie-session path tier-2 produces).
+  (`Continue with Google`/`Apple` are a separate OAuth flow — out of scope for
+  tier-1; tier-1 is the email/password form only.)
 - **Cloudflare** in front (`/cdn-cgi/rum`); plain `fetch` with session cookies was
   NOT bot-walled during the spike (tier-3 transport stays a fallback).
 - Frontend is a MobX SPA off `g0.evitecdn.com`; pages are server-rendered, so the

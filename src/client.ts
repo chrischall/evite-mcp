@@ -213,18 +213,21 @@ export class EviteClient {
   // when a write tool is called with `confirm: true` — the default path returns
   // a dry-run preview without ever touching the network.
   //
-  // VERIFIED (live capture 2026-06-01): Evite splits writes across TWO bases —
-  //  1. host lifecycle actions: `POST /services/event/v1/{id}/actions/{verb}/`
-  //     → 202 (NOT PUT/POST to the bare resource). Confirmed via cancel, captured
-  //     twice. {@link cancelEvent} is VERIFIED.
-  //  2. guest/RSVP/send flow: `/ajax/event/{id}/…` (e.g. add-guest
-  //     `POST /ajax/event/{id}/guestlist/draft/` → 200, captured live).
-  // So rsvp/sendMessage most likely live under `/ajax/event/{id}/…`, not the
-  // `/services/` path stubbed below; createEvent goes through the Fabric editor's
-  // own API. Those three stay UNVERIFIED (endpoints narrowed, BODIES pending —
-  // see issue #3 + docs/EVITE-API.md). Capture note: read writes at the
-  // browser/network layer — the SPA closes over `fetch` at load, so an in-page
-  // monkeypatch never sees its calls (and that layer doesn't expose request bodies).
+  // CSRF: all writes send the current `csrftoken` cookie in `X-CSRFToken`
+  // (VERIFIED). The cookie ROTATES mid-session — the resolver must read it fresh
+  // per request (a stale value 403s).
+  //
+  // VERIFIED endpoints (live probe 2026-06-01):
+  //  - {@link rsvp}           PUT  /services/event/v1/{id}/guests/{guestId}     → 200
+  //  - {@link cancelEvent}    POST /services/event/v1/{id}/actions/cancel/      → 202
+  //  - {@link reinstateEvent} POST /services/event/v1/{id}/actions/reinstate/   → 202
+  //  - add-guest              POST /ajax/event/{id}/guestlist/draft/  body `[{name,email}]` → persists
+  // The `/services/…/actions/{verb}/` and `/ajax/event/{id}/…` bases are distinct;
+  // guest/RSVP live on /services, the create→guest→send "Fabric" flow on /ajax.
+  //
+  // STILL UNVERIFIED: {@link sendMessage} (posts location is read-confirmed but the
+  // write body isn't) and {@link createEvent}/{@link updateEvent} (the Fabric editor
+  // posts to its own API). See issue #3 + docs/EVITE-API.md.
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
@@ -263,13 +266,14 @@ export class EviteClient {
   }
 
   /**
-   * RSVP for a guest — mutates the guest resource under
-   * `POST /services/event/v1/{id}/guests/{guestId}`.
+   * RSVP for a guest — mutates the guest resource via
+   * **`PUT /services/event/v1/{id}/guests/{guestId}`** → `200`.
    *
-   * UNVERIFIED payload — see issue #3. Field names (`rsvpResponse`,
-   * `numberOfAdults`, `numberOfKids`, `comments`) mirror the confirmed READ
-   * guest shape, but the write contract (method, exact keys) is a guess until a
-   * live compose-capture confirms it.
+   * VERIFIED (live probe 2026-06-01): the `PUT` to this path was accepted (200,
+   * echoing the guest); the sibling candidates — `POST` to the same path,
+   * `/actions/rsvp/`, and the `/ajax/…/rsvp/` forms — all `404`. The body keys
+   * (`rsvpResponse`, `numberOfAdults`, `numberOfKids`, `comments`) match the
+   * confirmed READ guest shape and were accepted without a 400.
    */
   async rsvp(eventId: string, guestId: string, input: RsvpInput): Promise<unknown> {
     const body: Record<string, unknown> = {
@@ -279,7 +283,7 @@ export class EviteClient {
     };
     if (input.note !== undefined) body.comments = input.note;
     return this.write(
-      'POST',
+      'PUT',
       `/services/event/v1/${encodeURIComponent(eventId)}/guests/${encodeURIComponent(guestId)}`,
       body,
     );
@@ -323,14 +327,28 @@ export class EviteClient {
    * Cancel an event (also the "delete draft" action) —
    * `POST /services/event/v1/{id}/actions/cancel/`, empty body, → 202 Accepted.
    *
-   * VERIFIED against a live write capture (2026-06-01): this is the exact request
-   * the site issues to remove a draft. The only confirmed mutating endpoint, and
-   * the template for the `/actions/{verb}/` convention the other writes follow.
+   * VERIFIED (live probe 2026-06-01): the exact request the site issues to remove
+   * a draft / cancel an event; the template for the `/actions/{verb}/` convention.
    */
   async cancelEvent(eventId: string): Promise<unknown> {
     return this.write(
       'POST',
       `/services/event/v1/${encodeURIComponent(eventId)}/actions/cancel/`,
+      {},
+    );
+  }
+
+  /**
+   * Reinstate a previously-canceled event —
+   * `POST /services/event/v1/{id}/actions/reinstate/`, empty body, → 202 Accepted.
+   *
+   * VERIFIED (live probe 2026-06-01): the inverse of {@link cancelEvent}; restores
+   * a `cancelled` event back to `sending`.
+   */
+  async reinstateEvent(eventId: string): Promise<unknown> {
+    return this.write(
+      'POST',
+      `/services/event/v1/${encodeURIComponent(eventId)}/actions/reinstate/`,
       {},
     );
   }

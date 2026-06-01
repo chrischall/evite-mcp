@@ -40,7 +40,7 @@ function headersOf(spy: ReturnType<typeof mockFetch>, n = 0): Record<string, str
 afterEach(() => vi.restoreAllMocks());
 
 describe('EviteClient — rsvp', () => {
-  it('POSTs the guest resource with the CSRF header and rsvp fields', async () => {
+  it('PUTs the guest resource with the CSRF header and rsvp fields', async () => {
     const spy = mockFetch({ body: { ok: true } });
     const client = newClient();
     await client.rsvp('EVENTID0', 'GUEST9', {
@@ -52,8 +52,9 @@ describe('EviteClient — rsvp', () => {
 
     const url = spy.mock.calls[0]![0] as string;
     const init = spy.mock.calls[0]![1] as RequestInit;
+    // Verified live: PUT /services/event/v1/{id}/guests/{guestId} → 200.
     expect(url).toBe('https://www.evite.com/services/event/v1/EVENTID0/guests/GUEST9');
-    expect(init.method).toBe('POST');
+    expect(init.method).toBe('PUT');
 
     const headers = headersOf(spy);
     expect(headers.cookie).toBe(fakeSession.cookieHeader);
@@ -152,6 +153,22 @@ describe('EviteClient — cancelEvent (VERIFIED endpoint)', () => {
     const client = newClient();
     await expect(client.cancelEvent('EVENTID0')).resolves.toEqual({});
     expect(spy).toHaveBeenCalledOnce();
+  });
+});
+
+describe('EviteClient — reinstateEvent (VERIFIED endpoint)', () => {
+  it('POSTs the /actions/reinstate/ sub-path with an empty body + CSRF header', async () => {
+    const spy = mockFetch({ status: 202, rawBody: '' });
+    const client = newClient();
+    await client.reinstateEvent('EVENTID0');
+
+    const url = spy.mock.calls[0]![0] as string;
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    // Confirmed live: POST /services/event/v1/{id}/actions/reinstate/ → 202.
+    expect(url).toBe('https://www.evite.com/services/event/v1/EVENTID0/actions/reinstate/');
+    expect(init.method).toBe('POST');
+    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    expect(bodyOf(spy)).toEqual({});
   });
 });
 

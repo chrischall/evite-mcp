@@ -158,6 +158,29 @@ that cleared `read_network_requests`):
 > request *bodies* for `send`/`sendMessage` (the URL-only observer can't see them)
 > and `createEvent`'s `templateName` value (it creates a draft but 500s on success).
 
+### Guest edit / remove + duplicate + settings (DevTools HAR, 2026-06-01)
+Captured from a DevTools HAR (Preserve-log on) of real actions on a throwaway:
+- **Edit a draft guest** — **`PATCH /ajax/event/{id}/guestlist/draft/`**, body the full
+  guest object `{guest_id, email, name, phone, event_id, invite_method}` → `200`
+  (`guest_id` selects, the rest are the new values). → `EviteClient.updateGuest()`.
+- **Remove a draft guest** — **`DELETE /ajax/event/{id}/guestlist/draft/{guestId}`**
+  (no body) → `200`. → `EviteClient.removeGuest()`.
+- **Duplicate event** — **`GET /plus/create/{id}/copy/?previous=my_events`** → `302`,
+  `Location: /invitation/{newId}/customize?…&source_event={id}` (the new draft's id is
+  the `/invitation/{newId}/` segment). → `EviteClient.duplicateEvent()`.
+- **Settings / full event edit** — the editor's save is **`POST /ajax/event/{id}/update/`**
+  with the ENTIRE event object `{event:{template_name, host_name, …, rsvp, rsvp_style,
+  …}}` (snake_case) → `200`. This is a read-modify-write; settings (`rsvp_style`, RSVP
+  deadline, privacy, plus-one) are embedded fields, not a discrete `settings:{}` blob.
+  NOT yet tooled — needs the matching full-object GET before a safe partial-update tool
+  can be built (posting a partial object would drop fields).
+
+### Not a JSON endpoint
+- **Profile / whoami** — no `/services/` or `/ajax/` user endpoint exists; the signed-in
+  user's name/email is server-rendered into the page HTML. No clean `evite_me` tool.
+- **Message all guests** — the verified `send_message` is per-guest (`/tsunami/`); a
+  single broadcast-to-all path was never observed (the UI fans out per guest).
+
 > The original assumption that create/update used a separate "Fabric" API was
 > WRONG — they're plain `/services/event/v1/` calls (create = POST to the
 > collection, update = PATCH the resource), both VERIFIED above. The Fabric editor

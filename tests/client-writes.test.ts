@@ -311,4 +311,20 @@ describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
     expect(result.newEventId).toBe('NEWID9');
     expect(result.customizeUrl).toContain('source_event=EVENTID0');
   });
+
+  it('maps 401/403 to SessionNotAuthenticatedError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 403 }) as unknown as Response,
+    );
+    const client = newClient();
+    await expect(client.duplicateEvent('E')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
+  it('throws with the response body when the Location has no /invitation/ segment', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('upstream boom', { status: 500, headers: { location: '' } }) as unknown as Response,
+    );
+    const client = newClient();
+    await expect(client.duplicateEvent('E')).rejects.toThrow(/upstream boom/);
+  });
 });

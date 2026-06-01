@@ -323,9 +323,11 @@ export class EviteClient {
   //  - {@link reinstateEvent}  POST /services/event/v1/{id}/actions/reinstate/      → 202
   //  - add-guest               POST /ajax/event/{id}/guestlist/draft/  body [{name,email}]
   //  - {@link sendMessage}     POST /tsunami/v1/services/event/{id}/guest/{gid}/messages
+  //  - {@link broadcast}       POST /tsunami/v1/services/event/{id}/broadcast/   body fully captured
   // Three bases: REST `/services/…`, legacy `/ajax/event/{id}/…` (guest list), and
-  // the `/tsunami/…` messaging service. Body fields for send/sendMessage are
-  // assumed (only endpoints captured — observer gives URL, not body); see issue #3.
+  // the `/tsunami/…` messaging service. Body fields for send/sendMessage are still
+  // assumed (only endpoints captured — observer gives URL, not body; see issue #3);
+  // broadcast's body, by contrast, was fully captured.
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
@@ -587,8 +589,11 @@ export class EviteClient {
     const location = response.headers.get('location') ?? '';
     const match = location.match(/\/invitation\/([^/?]+)\//);
     if (!match) {
+      // Non-redirect (e.g. a 500): the Location header is empty here, so read the
+      // actual response body for the error message, falling back to `location`.
+      const body = await response.text().catch(() => location);
       throw new Error(
-        formatApiError(response.status, 'GET', '/plus/create/{id}/copy/', location, {
+        formatApiError(response.status, 'GET', '/plus/create/{id}/copy/', body || location, {
           service: 'Evite',
         }),
       );

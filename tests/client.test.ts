@@ -91,6 +91,23 @@ describe('EviteClient — listEvents', () => {
     await client.listEvents({ filterBy: 'all', status: ['past'] });
     expect(resolver).toHaveBeenCalledTimes(1);
   });
+
+  it('serializes concurrent first calls onto a single session resolution', async () => {
+    mockFetch({ body: eventsList }, { body: eventsList });
+    let release: ((s: typeof fakeSession) => void) | undefined;
+    const resolver = vi.fn(
+      () =>
+        new Promise<typeof fakeSession>((res) => {
+          release = res;
+        }),
+    );
+    const client = new EviteClient({ resolveSession: resolver });
+    const p1 = client.listEvents({ filterBy: 'all', status: ['past'] });
+    const p2 = client.listEvents({ filterBy: 'all', status: ['past'] });
+    release!(fakeSession);
+    await Promise.all([p1, p2]);
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('EviteClient — single-event sub-resources', () => {
@@ -167,6 +184,20 @@ describe('EviteClient — error handling', () => {
     mockFetch({ status: 404, rawBody: 'not found' });
     const client = newClient();
     await expect(client.getEvent('MISSING')).rejects.toThrow(/404/);
+  });
+
+  it('tolerates a non-2xx whose body read fails (no body in the error)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      return {
+        status: 500,
+        ok: false,
+        text: async () => {
+          throw new Error('stream broke');
+        },
+      } as unknown as Response;
+    });
+    const client = newClient();
+    await expect(client.getEvent('X')).rejects.toThrow(/Evite error 500/);
   });
 });
 

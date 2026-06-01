@@ -2,6 +2,9 @@
 import { runMcp } from '@chrischall/mcp-utils';
 import { EviteClient } from './client.js';
 import { registerHealthcheckTools } from './tools/healthcheck.js';
+import { registerEventTools } from './tools/events.js';
+import { registerGuestTools } from './tools/guests.js';
+import { registerMessageTools } from './tools/messages.js';
 
 const client = new EviteClient();
 
@@ -10,5 +13,10 @@ await runMcp({
   version: '0.1.0', // x-release-please-version
   banner: '[evite-mcp] This project was developed and is maintained by AI. Use at your own discretion.',
   deps: client,
-  tools: [registerHealthcheckTools],
+  tools: [
+    registerHealthcheckTools,
+    registerEventTools,
+    registerGuestTools,
+    registerMessageTools,
+  ],
 });

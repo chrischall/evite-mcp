@@ -123,6 +123,11 @@ describe('resolveSession', () => {
       await expect(resolveSession()).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
     });
 
+    it('throws SessionNotAuthenticatedError when bootstrap omits the cookies field entirely', async () => {
+      bootstrapMock.mockResolvedValue({});
+      await expect(resolveSession()).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+    });
+
     it('throws SessionNotAuthenticatedError when bootstrap itself fails', async () => {
       bootstrapMock.mockRejectedValue(new Error('extension offline'));
       await expect(resolveSession()).rejects.toBeInstanceOf(SessionNotAuthenticatedError);

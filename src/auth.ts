@@ -41,7 +41,7 @@ import { loginWithPassword, type FetchImpl } from './auth-login.js';
 
 /** Server identity reported to the fetchproxy bridge. */
 const SERVER_NAME = 'evite-mcp';
-const SERVER_VERSION = '0.2.1'; // x-release-please-version
+const SERVER_VERSION = '0.3.0'; // x-release-please-version
 
 /** The cookie name carrying the CSRF token (needed for writes, Plan 3). */
 const CSRF_COOKIE = 'csrftoken';

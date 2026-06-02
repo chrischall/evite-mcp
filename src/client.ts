@@ -1,9 +1,10 @@
-import { openAsBlob } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import {
   buildQueryString,
+  fileBlob,
   formatApiError,
+  readFileHead,
   SessionNotAuthenticatedError,
 } from '@chrischall/mcp-utils';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
@@ -508,11 +509,9 @@ export class EviteClient {
     }
     // A FILE-BACKED Blob: `fetch` streams the bytes off disk as it sends the
     // multipart body, so a 20 MB photo never becomes a 20 MB Buffer in memory.
-    // (The generic version is `fileBlob`/`readFileHead` in @chrischall/mcp-utils;
-    // adopt those on the next mcp-utils bump.)
     let blob: Blob;
     try {
-      blob = await openAsBlob(abs, { type: mimetype });
+      blob = await fileBlob(abs, { type: mimetype });
     } catch {
       throw new Error(`Cannot read image file: ${input.path}`);
     }
@@ -521,8 +520,8 @@ export class EviteClient {
         `Image is ${blob.size} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
       );
     }
-    // Dimensions need only the header — slice reads just the first 64 KB off disk.
-    const head = Buffer.from(await blob.slice(0, 65_536).arrayBuffer());
+    // Dimensions need only the header — read just the first 64 KB off disk.
+    const head = await readFileHead(abs, 65_536);
     const { width, height } = imageDimensions(head, mimetype);
 
     // ── Step 1: signed-upload ticket from Evite.

@@ -550,6 +550,7 @@ export class EviteClient {
     // ── Step 2: multipart POST to GCS (signed fields first, then `file`; no cookies).
     const form = new FormData();
     for (const [name, value] of Object.entries(ticket.upload_form)) form.append(name, value);
+    /* v8 ignore next -- basename of a readable absolute path is never empty; `|| 'photo'` is a defensive fallback */
     const filename = basename(abs) || 'photo';
     form.append('file', blob, filename);
 

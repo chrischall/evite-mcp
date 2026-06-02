@@ -94,6 +94,7 @@ function readSetCookies(response: Response): string[] {
 function parseCookies(setCookies: string[], only?: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of setCookies) {
+    /* v8 ignore next -- split(';',1) always yields a defined element; `?.`/`?? ''` only satisfy noUncheckedIndexedAccess */
     const firstPair = raw.split(';', 1)[0]?.trim() ?? '';
     const eq = firstPair.indexOf('=');
     if (eq <= 0) continue;

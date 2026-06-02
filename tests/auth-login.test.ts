@@ -158,3 +158,41 @@ describe('loginWithPassword', () => {
     expect(result.csrfToken).toBe('c');
   });
 });
+
+describe('loginWithPassword — error & parser branches', () => {
+  it('maps a priming-GET network failure to SessionNotAuthenticatedError', async () => {
+    await expect(loginWithPassword('u@e.com', 'pw', vi.fn(async () => { throw new Error('down'); }))).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+  it('maps a login-POST network failure to SessionNotAuthenticatedError', async () => {
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') throw new Error('down');
+      return fakeResponse({ ok: true, status: 200, setCookies: ['csrftoken=prime-csrf; Path=/'] });
+    });
+    await expect(loginWithPassword('u@e.com', 'pw', fetchImpl)).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+  it('reads Set-Cookie via the legacy headers.get fallback', async () => {
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return { ok: true, status: 200, headers: { getSetCookie: () => ['x-evite-session=s; Path=/', 'evtsession=e; Path=/'] }, json: async () => ({}) } as unknown as Response;
+      return { ok: true, status: 200, headers: { get: (n: string) => (n === 'set-cookie' ? 'csrftoken=prime-csrf; Path=/' : null) }, json: async () => ({}) } as unknown as Response;
+    });
+    expect((await loginWithPassword('u@e.com', 'pw', fetchImpl)).cookieHeader).toBe('x-evite-session=s; evtsession=e');
+  });
+  it('skips malformed and empty-value Set-Cookie entries', async () => {
+    const fetchImpl = twoPhase({ login: { ok: true, status: 200, setCookies: ['x-evite-session=s', 'evtsession=e', 'malformed-no-eq', 'empty='] } });
+    expect((await loginWithPassword('u@e.com', 'pw', fetchImpl)).cookieHeader).toBe('x-evite-session=s; evtsession=e');
+  });
+  it('treats a null legacy set-cookie header as no cookies (login then fails)', async () => {
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) } as unknown as Response;
+      return fakeResponse({ ok: true, status: 200, setCookies: ['csrftoken=prime-csrf; Path=/'] });
+    });
+    await expect(loginWithPassword('u@e.com', 'pw', fetchImpl)).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+  it('treats a headers object with no cookie accessors as no cookies', async () => {
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return { ok: true, status: 200, headers: {}, json: async () => ({}) } as unknown as Response;
+      return fakeResponse({ ok: true, status: 200, setCookies: ['csrftoken=prime-csrf; Path=/'] });
+    });
+    await expect(loginWithPassword('u@e.com', 'pw', fetchImpl)).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+});

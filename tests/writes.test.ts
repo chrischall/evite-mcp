@@ -474,3 +474,41 @@ describe('evite_duplicate_event', () => {
     await h.close();
   });
 });
+
+describe('remaining write-tool execution + preview paths', () => {
+  it('evite_update_event (confirm) maps snake_case fields → the wire patch', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_update_event', {
+      event_id: 'EVENTID0', title: 'New Title',
+      start_datetime: '2026-07-01T18:00:00Z', end_datetime: '2026-07-01T21:00:00Z',
+      message: 'Updated details', confirm: true,
+    });
+    expect(client.updateEvent).toHaveBeenCalledWith('EVENTID0', {
+      title: 'New Title', startDatetime: '2026-07-01T18:00:00Z', endDatetime: '2026-07-01T21:00:00Z', message: 'Updated details',
+    });
+    await h.close();
+  });
+
+  it('evite_remove_guest: preview without confirm, executes with confirm', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const prev = await h.callTool('evite_remove_guest', { event_id: 'EV', guest_id: 'G' });
+    expect(client.removeGuest).not.toHaveBeenCalled();
+    expect(prev.content[0]!.text as string).toMatch(/preview/i);
+    await h.callTool('evite_remove_guest', { event_id: 'EV', guest_id: 'G', confirm: true });
+    expect(client.removeGuest).toHaveBeenCalledWith('EV', 'G');
+    await h.close();
+  });
+
+  it('evite_reinstate_event: preview without confirm, executes with confirm', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const prev = await h.callTool('evite_reinstate_event', { event_id: 'EV' });
+    expect(client.reinstateEvent).not.toHaveBeenCalled();
+    expect(prev.content[0]!.text as string).toMatch(/preview/i);
+    await h.callTool('evite_reinstate_event', { event_id: 'EV', confirm: true });
+    expect(client.reinstateEvent).toHaveBeenCalledWith('EV');
+    await h.close();
+  });
+});

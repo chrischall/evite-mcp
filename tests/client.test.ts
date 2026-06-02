@@ -253,3 +253,32 @@ describe('EviteClient — listTemplates', () => {
     );
   });
 });
+
+describe('EviteClient — getHtml / write error paths', () => {
+  it('maps a 401 on an HTML scrape (listTemplates) to SessionNotAuthenticatedError', async () => {
+    mockFetch({ status: 401, rawBody: '' });
+    await expect(newClient().listTemplates('party')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
+  it('surfaces a non-2xx HTML-scrape failure with the path', async () => {
+    mockFetch({ status: 500, rawBody: 'oops' });
+    await expect(newClient().listTemplates('party')).rejects.toThrow(/Evite error 500/);
+  });
+
+  it('tolerates an unreadable HTML-scrape error body', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      ({ status: 500, ok: false, text: async () => { throw new Error('broke'); } } as unknown as Response));
+    await expect(newClient().listTemplates('party')).rejects.toThrow(/Evite error 500/);
+  });
+
+  it('surfaces a non-2xx write failure via the shared formatter', async () => {
+    mockFetch({ status: 500, rawBody: 'server error' });
+    await expect(newClient().rsvp('EV', 'G', { response: 'yes' })).rejects.toThrow(/Evite error 500/);
+  });
+
+  it('tolerates an unreadable write error body', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      ({ status: 500, ok: false, text: async () => { throw new Error('broke'); } } as unknown as Response));
+    await expect(newClient().rsvp('E', 'G', { response: 'yes' })).rejects.toThrow(/Evite error 500/);
+  });
+});

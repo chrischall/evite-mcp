@@ -538,3 +538,77 @@ describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
     await expect(client.duplicateEvent('E')).rejects.toThrow();
   });
 });
+
+describe('EviteClient — uploadPhoto error/edge branches', () => {
+  const PNG = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([0, 0, 0, 13]),
+    Buffer.from('IHDR'),
+    Buffer.from([0, 0, 0, 3, 0, 0, 0, 2]),
+  ]);
+  const writePng = () => {
+    const p = join(tmpdir(), `evite-cov-${PNG.length}.png`);
+    writeFileSync(p, PNG);
+    return p;
+  };
+  const ticket = (extra: Record<string, unknown> = {}) => new Response(JSON.stringify({
+    upload_url: 'https://storage.googleapis.com/b',
+    upload_form: { key: 'events/EV/albums/1/PID', policy: 'P', signature: 'S' },
+    ...extra,
+  }), { status: 200 });
+
+  it('formats a GCS failure even when the GCS body cannot be read', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('/upload/request/')) return ticket();
+      if (u.includes('storage.googleapis.com')) {
+        return { status: 400, ok: false, headers: { get: () => null }, text: () => Promise.reject(new Error('broken')) } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    });
+    const path = writePng();
+    try {
+      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/Google Cloud Storage error 400/);
+    } finally { rmSync(path, { force: true }); }
+  });
+
+  it('swallows a finish-endpoint failure and still completes the upload', async () => {
+    const FIN = 'https://www.evite.com/ajax/upload/finish/x';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('/upload/request/')) return ticket({ access_url: 'https://cdn/PID', upload_form: { key: 'events/EV/albums/1/PID', policy: 'P', signature: 'S', success_action_redirect: FIN } });
+      if (u.includes('storage.googleapis.com')) return new Response(null, { status: 303, headers: { location: `${FIN}?k=1` } });
+      if (u.includes('/ajax/upload/finish/')) return new Response('err', { status: 500 });
+      if (u.includes('/shared-gallery/')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      throw new Error(`unexpected fetch: ${u}`);
+    });
+    const path = writePng();
+    try {
+      const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+      expect(result.photoId).toBe('PID');
+      expect(result.accessUrl).toBe('https://cdn/PID');
+    } finally { rmSync(path, { force: true }); }
+  });
+
+  it('expands a ~ path before reading (and fails cleanly when the file is absent)', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    await expect(newClient().uploadPhoto('EV', { path: '~/evite-mcp-no-such-file.png', guestId: 'G' })).rejects.toThrow(/Cannot read image file/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('EviteClient — sendInvitation (confirm-gated)', () => {
+  it('POSTs the event send endpoint', async () => {
+    const spy = mockFetch({ body: { ok: true } });
+    await newClient().sendInvitation('EVENTID0');
+    expect(spy.mock.calls[0]![0]).toBe('https://www.evite.com/services/event/v1/EVENTID0/send/');
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe('POST');
+  });
+});
+
+describe('EviteClient — duplicateEvent no-redirect branch', () => {
+  it('throws (reading the body) when the copy response carries no Location header', async () => {
+    mockFetch({ status: 200, rawBody: 'no invitation link here' });
+    await expect(newClient({ cookieHeader: 'c=1' }).duplicateEvent('E')).rejects.toThrow();
+  });
+});

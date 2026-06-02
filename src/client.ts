@@ -509,9 +509,15 @@ export class EviteClient {
     }
     // A FILE-BACKED Blob: `fetch` streams the bytes off disk as it sends the
     // multipart body, so a 20 MB photo never becomes a 20 MB Buffer in memory.
+    // Both file operations live in one try so any read-time I/O error (the
+    // file vanishing between awaits, EACCES, …) surfaces as the friendly
+    // message rather than a raw Node error. Dimensions need only the header,
+    // so readFileHead pulls just the first 64 KB off disk.
     let blob: Blob;
+    let head: Buffer;
     try {
       blob = await fileBlob(abs, { type: mimetype });
+      head = await readFileHead(abs, 65_536);
     } catch {
       throw new Error(`Cannot read image file: ${input.path}`);
     }
@@ -520,8 +526,6 @@ export class EviteClient {
         `Image is ${blob.size} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
       );
     }
-    // Dimensions need only the header — read just the first 64 KB off disk.
-    const head = await readFileHead(abs, 65_536);
     const { width, height } = imageDimensions(head, mimetype);
 
     // ── Step 1: signed-upload ticket from Evite.

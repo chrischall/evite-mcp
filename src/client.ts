@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { openAsBlob } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import {
@@ -500,24 +500,30 @@ export class EviteClient {
    */
   async uploadPhoto(eventId: string, input: UploadPhotoInput): Promise<UploadPhotoResult> {
     const abs = expandHome(input.path);
-    let buffer: Buffer;
-    try {
-      buffer = readFileSync(abs);
-    } catch {
-      throw new Error(`Cannot read image file: ${input.path}`);
-    }
     const mimetype = input.mimetype ?? mimetypeForPath(abs);
     if (!mimetype) {
       throw new Error(
         `Unknown image type for "${input.path}" — use a .jpg/.png/.gif/.webp/.heic file or pass mimetype.`,
       );
     }
-    if (buffer.byteLength > MAX_UPLOAD_BYTES) {
+    // A FILE-BACKED Blob: `fetch` streams the bytes off disk as it sends the
+    // multipart body, so a 20 MB photo never becomes a 20 MB Buffer in memory.
+    // (The generic version is `fileBlob`/`readFileHead` in @chrischall/mcp-utils;
+    // adopt those on the next mcp-utils bump.)
+    let blob: Blob;
+    try {
+      blob = await openAsBlob(abs, { type: mimetype });
+    } catch {
+      throw new Error(`Cannot read image file: ${input.path}`);
+    }
+    if (blob.size > MAX_UPLOAD_BYTES) {
       throw new Error(
-        `Image is ${buffer.byteLength} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
+        `Image is ${blob.size} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
       );
     }
-    const { width, height } = imageDimensions(buffer, mimetype);
+    // Dimensions need only the header — slice reads just the first 64 KB off disk.
+    const head = Buffer.from(await blob.slice(0, 65_536).arrayBuffer());
+    const { width, height } = imageDimensions(head, mimetype);
 
     // ── Step 1: signed-upload ticket from Evite.
     const ticket = await this.write<UploadTicket>(
@@ -545,7 +551,7 @@ export class EviteClient {
     const form = new FormData();
     for (const [name, value] of Object.entries(ticket.upload_form)) form.append(name, value);
     const filename = basename(abs) || 'photo';
-    form.append('file', new Blob([new Uint8Array(buffer)], { type: mimetype }), filename);
+    form.append('file', blob, filename);
 
     const gcs = await fetch(ticket.upload_url, { method: 'POST', body: form, redirect: 'manual' });
     // Success is a 303 redirect (to success_action_redirect); accept 2xx too.

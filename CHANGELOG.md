@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/chrischall/evite-mcp/compare/v0.2.1...v0.3.0) (2026-06-02)
+
+
+### Features
+
+* evite_upload_photo — upload to an event's shared photo album ([#18](https://github.com/chrischall/evite-mcp/issues/18)) ([6f0784f](https://github.com/chrischall/evite-mcp/commit/6f0784fc9a25ca84700987fe7524cff535708856))
+
+
+### Performance
+
+* stream photo upload from disk instead of buffering the whole file ([#20](https://github.com/chrischall/evite-mcp/issues/20)) ([8304037](https://github.com/chrischall/evite-mcp/commit/8304037533e29503f96daccb88c7243f92681147))
+
 ## [0.2.1](https://github.com/chrischall/evite-mcp/compare/v0.2.0...v0.2.1) (2026-06-01)
 
 

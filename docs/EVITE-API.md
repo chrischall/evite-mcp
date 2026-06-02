@@ -196,6 +196,30 @@ Captured from a DevTools HAR (Preserve-log on) of real actions on a throwaway:
   we send it only when the caller provides one). This really emails everyone in those
   segments. → `EviteClient.broadcast()` / `evite_broadcast`.
 
+### Photo upload to the shared gallery — VERIFIED 4-step GCS flow (captured 2026-06-02)
+A `services/photos/v1/…` API + a **Google Cloud Storage signed POST**. The file goes
+to GCS, not Evite. Steps:
+1. **`POST /services/photos/v1/{eventId}/upload/request/`** (cookies + CSRF), body
+   `{ upload_path:"feed_photos", event_id, photo_id:"", guest_id, redirect:true,
+   mimetype, width, height }`. Returns the **signed-upload ticket**:
+   `{ upload_url:"https://storage.googleapis.com/evite-user-uploads-prod",
+   access_url, gcs_path, upload_form:{ key, "Content-Type", success_action_redirect,
+   GoogleAccessId, policy, signature } }`. The **photo id is the last segment of
+   `upload_form.key`** (`events/{eventId}/albums/1/{photoId}`); `photo_id` goes IN
+   empty and is assigned here.
+2. **`POST {upload_url}`** to GCS as **`multipart/form-data`** — the `upload_form`
+   fields first (verbatim, in order), then **`file` LAST** (no Evite cookies; the
+   signed `policy`+`signature` are the auth). GCS replies **`303`** with
+   `Location:` = the Evite finish URL (with `?bucket&key&etag`). The policy (base64,
+   decodable) enforces `eq $key`, `eq $Content-Type` (= the step-1 `mimetype`),
+   `content-length-range 0–20000000` (20 MB), and `eq $success_action_redirect`.
+3. **`GET /ajax/upload/finish/{bucket}/events/{eventId}/albums/1/{photoId}?bucket&key&etag`**
+   (cookies) — the 303 target; finalizes the object into the album.
+4. **`POST /services/photos/v1/{eventId}/shared-gallery/?gid={guestId}`** (cookies +
+   CSRF), body `{ "photo_ids":["{photoId}"] }` — registers it in the gallery.
+→ `EviteClient.uploadPhoto()` / `evite_upload_photo`. (Host-gallery vs shared-gallery:
+this captures the **shared** feed flow.)
+
 ### Not a JSON endpoint
 - **Profile / whoami** — no `/services/` or `/ajax/` user endpoint exists; the signed-in
   user's name/email is server-rendered into the page HTML. No clean `evite_me` tool.

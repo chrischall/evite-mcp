@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { EviteClient, CSRF_HEADER } from '../src/client.js';
 import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
 
@@ -133,6 +136,108 @@ describe('EviteClient — broadcast (VERIFIED endpoint)', () => {
     const client = newClient();
     await client.broadcast('E', { message: 'hi', groups: ['no'] });
     expect(bodyOf(spy)).not.toHaveProperty('participantCount');
+  });
+});
+
+describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
+  // A minimal valid PNG (sig + IHDR width=3 height=2) so dimensions parse.
+  const PNG = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([0, 0, 0, 13]),
+    Buffer.from('IHDR'),
+    Buffer.from([0, 0, 0, 3, 0, 0, 0, 2]),
+  ]);
+
+  function writePng(): string {
+    const p = join(tmpdir(), `evite-test-${PNG.length}.png`);
+    writeFileSync(p, PNG);
+    return p;
+  }
+
+  // URL-aware fetch mock for the four calls.
+  function uploadFetch() {
+    const FINISH = 'https://www.evite.com/ajax/upload/finish/bucket/events/EV/albums/1/PHOTO9';
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('/upload/request/')) {
+        return new Response(
+          JSON.stringify({
+            upload_url: 'https://storage.googleapis.com/evite-user-uploads-prod',
+            access_url: 'https://storage.googleapis.com/evite-user-uploads-prod/events/EV/albums/1/PHOTO9?t=1',
+            gcs_path: '/evite-user-uploads-prod/events/EV/albums/1/PHOTO9',
+            upload_form: {
+              key: 'events/EV/albums/1/PHOTO9',
+              'Content-Type': 'image/png',
+              success_action_redirect: FINISH,
+              GoogleAccessId: 'svc@appspot.gserviceaccount.com',
+              policy: 'POLICY',
+              signature: 'SIG',
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (u.includes('storage.googleapis.com')) {
+        return new Response(null, { status: 303, headers: { location: `${FINISH}?bucket=b&key=k&etag=e` } });
+      }
+      if (u.includes('/ajax/upload/finish/')) return new Response('ok', { status: 200 });
+      if (u.includes('/shared-gallery/')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      throw new Error(`unexpected fetch: ${u}`);
+    });
+  }
+
+  it('runs request → GCS multipart → finish → register, returning the photo id', async () => {
+    const spy = uploadFetch();
+    const path = writePng();
+    try {
+      const result = await newClient().uploadPhoto('EV', { path, guestId: 'GUEST9' });
+      expect(result.photoId).toBe('PHOTO9');
+      expect(result.accessUrl).toContain('PHOTO9');
+
+      const calls = spy.mock.calls.map((c) => String(c[0]));
+      // Step 1: upload/request with the cookie session + CSRF + image metadata.
+      const reqIdx = calls.findIndex((u) => u.includes('/upload/request/'));
+      expect(calls[reqIdx]).toBe('https://www.evite.com/services/photos/v1/EV/upload/request/');
+      const reqInit = spy.mock.calls[reqIdx]![1] as RequestInit;
+      const reqBody = JSON.parse(reqInit.body as string);
+      expect(reqBody).toMatchObject({
+        upload_path: 'feed_photos',
+        guest_id: 'GUEST9',
+        mimetype: 'image/png',
+        width: 3,
+        height: 2,
+      });
+      expect((reqInit.headers as Record<string, string>)[CSRF_HEADER]).toBe('tok123');
+
+      // Step 2: multipart to GCS, redirect:manual, no cookie/CSRF header.
+      const gcsIdx = calls.findIndex((u) => u.includes('storage.googleapis.com'));
+      const gcsInit = spy.mock.calls[gcsIdx]![1] as RequestInit;
+      expect(gcsInit.method).toBe('POST');
+      expect(gcsInit.redirect).toBe('manual');
+      expect(gcsInit.body).toBeInstanceOf(FormData);
+      const fd = gcsInit.body as FormData;
+      expect(fd.get('key')).toBe('events/EV/albums/1/PHOTO9');
+      expect(fd.get('policy')).toBe('POLICY');
+      expect(fd.get('file')).toBeInstanceOf(Blob);
+      expect((gcsInit.headers ?? {}) as Record<string, string>).not.toHaveProperty(CSRF_HEADER);
+
+      // Step 4: register the photo id in the shared gallery.
+      const galIdx = calls.findIndex((u) => u.includes('/shared-gallery/'));
+      expect(calls[galIdx]).toContain('gid=GUEST9');
+      expect(JSON.parse((spy.mock.calls[galIdx]![1] as RequestInit).body as string)).toEqual({
+        photo_ids: ['PHOTO9'],
+      });
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('throws on an unreadable file before any network call', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    await expect(
+      newClient().uploadPhoto('EV', { path: '/no/such/file.png', guestId: 'G' }),
+    ).rejects.toThrow(/Cannot read image file/);
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

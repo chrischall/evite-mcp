@@ -2,11 +2,11 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for [Evite](https://www.evite.com) — read and act on your events as both **guest** (invitations received) and **host** (events you created): list events, view guest lists & RSVP tallies, RSVP, message guests, and create/edit events. Built on [`@chrischall/mcp-utils`](https://github.com/chrischall/mcp-utils).
 
-> **Status: read + write tools live.** The five read tools work against Evite's internal API, authenticating from email/password (tier-1, `POST /ajax_login`), a raw cookie env var, or a signed-in browser tab (fetchproxy bootstrap). The twelve write tools are **confirm-gated** — without `confirm: true` they only return a dry-run preview and send nothing — and their endpoints are **live-verified** (see [`docs/EVITE-API.md`](docs/EVITE-API.md)); a couple of request *bodies* are still assumed rather than captured ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
+> **Status: read + write tools live.** The five read tools work against Evite's internal API, authenticating from email/password (tier-1, `POST /ajax_login`), a raw cookie env var, or a signed-in browser tab (fetchproxy bootstrap). The thirteen write tools are **confirm-gated** — without `confirm: true` they only return a dry-run preview and send nothing — and their endpoints are **live-verified** (see [`docs/EVITE-API.md`](docs/EVITE-API.md)); a couple of request *bodies* are still assumed rather than captured ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
 
 ## Tools
 
-Six read tools (all read-only), twelve confirm-gated write tools, plus `evite_healthcheck`:
+Six read tools (all read-only), thirteen confirm-gated write tools, plus `evite_healthcheck`:
 
 | Tool | Endpoint | Returns |
 | --- | --- | --- |
@@ -26,6 +26,7 @@ Every write tool takes `confirm: boolean`. **Without `confirm: true` it performs
 | `evite_rsvp` | `PUT /services/event/v1/{id}/guests/{guestId}` | RSVP for a guest (response + adult/kid head counts + optional note) |
 | `evite_send_message` | `POST /tsunami/v1/services/event/{id}/guest/{gid}/messages` | send a private message to one guest (body assumed) |
 | `evite_broadcast` | `POST /tsunami/v1/services/event/{id}/broadcast/` | broadcast a message to whole RSVP segments (`virtual_groups`) at once |
+| `evite_upload_photo` | `POST …/photos/v1/{id}/upload/request/` → GCS → finish → shared-gallery | upload a local image to the event's shared photo album (4-step GCS signed upload) |
 | `evite_create_event` | `POST /services/event/v1/` (`{event:{…}}`) | create an event draft (needs `template_name`; the API 500s even on success) |
 | `evite_update_event` | `PATCH /services/event/v1/{id}` (`{event:{…}}`) | edit an event (only the fields you pass change) |
 | `evite_add_guest` | `POST /ajax/event/{id}/guestlist/draft/` | add guests to the draft (un-sent) list — `[{name,email}]` |
@@ -50,7 +51,7 @@ One tier is intentionally **deferred** (the resolver is shaped to slot it in):
 
 - **Fetchproxy as transport** (bot-wall retry through the browser bridge) — a fallback only needed if plain `fetch` trips a wall; not observed during discovery.
 
-The twelve write tools (rsvp, add/update/remove-guest, send, send-message, broadcast, create/update/cancel/reinstate/duplicate event) are **confirm-gated** (dry-run preview unless `confirm: true`). The single private `client.write()` helper attaches the CSRF token via one centralized header (`CSRF_HEADER` = `X-CSRFToken`; the `csrftoken` cookie rotates mid-session, so it's read fresh per request). Endpoints span three bases — REST `/services/…`, the legacy `/ajax/event/{id}/…` guest list, and the `/tsunami/…` messaging service — all live-verified; a couple of request bodies remain assumed ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
+The thirteen write tools (rsvp, add/update/remove-guest, send, send-message, broadcast, upload-photo, create/update/cancel/reinstate/duplicate event) are **confirm-gated** (dry-run preview unless `confirm: true`). The single private `client.write()` helper attaches the CSRF token via one centralized header (`CSRF_HEADER` = `X-CSRFToken`; the `csrftoken` cookie rotates mid-session, so it's read fresh per request). Endpoints span three bases — REST `/services/…`, the legacy `/ajax/event/{id}/…` guest list, and the `/tsunami/…` messaging service — all live-verified; a couple of request bodies remain assumed ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
 
 ## Development
 

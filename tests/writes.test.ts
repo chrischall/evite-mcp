@@ -26,6 +26,7 @@ function fakeClient() {
     cancelEvent: vi.fn(async () => ({ ok: true })),
     reinstateEvent: vi.fn(async () => ({ ok: true })),
     duplicateEvent: vi.fn(async () => ({ newEventId: 'NEW', customizeUrl: '/invitation/NEW/customize' })),
+    uploadPhoto: vi.fn(async () => ({ photoId: 'PHOTO9', accessUrl: 'https://x/PHOTO9' })),
   } as unknown as EviteClient & {
     rsvp: ReturnType<typeof vi.fn>;
     sendMessage: ReturnType<typeof vi.fn>;
@@ -39,6 +40,7 @@ function fakeClient() {
     reinstateEvent: ReturnType<typeof vi.fn>;
     duplicateEvent: ReturnType<typeof vi.fn>;
     broadcast: ReturnType<typeof vi.fn>;
+    uploadPhoto: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -56,7 +58,7 @@ function guardFetch() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('write tool registration', () => {
-  it('registers the twelve write tools, all readOnlyHint:false', async () => {
+  it('registers the thirteen write tools, all readOnlyHint:false', async () => {
     const h = await harnessFor(fakeClient());
     const tools = (await h.client.listTools()).tools;
     const names = tools.map((t) => t.name).sort();
@@ -74,6 +76,7 @@ describe('write tool registration', () => {
         'evite_send_message',
         'evite_update_event',
         'evite_update_guest',
+        'evite_upload_photo',
       ].sort(),
     );
     for (const t of tools) {
@@ -210,6 +213,42 @@ describe('evite_broadcast', () => {
       message: 'See you Saturday!',
       groups: ['yes', 'maybe'],
       participantCount: 4,
+    });
+    await h.close();
+  });
+});
+
+describe('evite_upload_photo', () => {
+  it('without confirm: previews and makes no call (no file read)', async () => {
+    const fetchSpy = guardFetch();
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_upload_photo', {
+      event_id: 'EVENTID0',
+      guest_id: 'GUEST9',
+      path: '~/Pictures/cake.jpg',
+    });
+    expect(client.uploadPhoto).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const text = res.content[0]!.text as string;
+    expect(text).toMatch(/preview/i);
+    expect(text).toContain('cake.jpg');
+    await h.close();
+  });
+
+  it('with confirm: calls client.uploadPhoto with path + guestId', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await h.callTool('evite_upload_photo', {
+      event_id: 'EVENTID0',
+      guest_id: 'GUEST9',
+      path: '~/Pictures/cake.jpg',
+      confirm: true,
+    });
+    expect(client.uploadPhoto).toHaveBeenCalledWith('EVENTID0', {
+      path: '~/Pictures/cake.jpg',
+      guestId: 'GUEST9',
+      mimetype: undefined,
     });
     await h.close();
   });

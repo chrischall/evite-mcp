@@ -16,7 +16,7 @@ const EXT_MIME: Record<string, string> = {
   gif: 'image/gif',
   webp: 'image/webp',
   heic: 'image/heic',
-  heif: 'image/heic',
+  heif: 'image/heif',
 };
 
 /** Infer the image mimetype from a path's extension (case-insensitive). */

@@ -239,6 +239,100 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     ).rejects.toThrow(/Cannot read image file/);
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it('rejects an unknown image type when no mimetype is given (before any network call)', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const path = join(tmpdir(), 'evite-test-unknown.dat');
+    writeFileSync(path, PNG);
+    try {
+      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/Unknown image type/);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('rejects a file over the upload size cap (before any network call)', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const path = join(tmpdir(), 'evite-test-big.png');
+    writeFileSync(path, Buffer.alloc(20_000_001)); // 1 byte over MAX_UPLOAD_BYTES
+    try {
+      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/photo upload limit/);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('throws when the upload ticket is missing required fields', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ upload_form: { key: 'k' } }), { status: 200 }), // no upload_url
+    );
+    const path = writePng();
+    try {
+      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/usable upload ticket/);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('throws when no photo id can be derived from the ticket', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      // upload_form present (passes the field check) but no `key` and no `gcs_path`.
+      new Response(JSON.stringify({ upload_url: 'https://storage.googleapis.com/b', upload_form: { policy: 'P' } }), { status: 200 }),
+    );
+    const path = writePng();
+    try {
+      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/determine the photo id/);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('surfaces a non-2xx, non-303 GCS upload failure via the shared formatter', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('/upload/request/')) {
+        return new Response(JSON.stringify({
+          upload_url: 'https://storage.googleapis.com/b',
+          upload_form: { key: 'events/EV/albums/1/PID', policy: 'P', signature: 'S' },
+        }), { status: 200 });
+      }
+      if (u.includes('storage.googleapis.com')) return new Response('denied', { status: 400 });
+      throw new Error(`unexpected fetch: ${u}`);
+    });
+    const path = writePng();
+    try {
+      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/Google Cloud Storage error 400/);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('skips the finish step and omits accessUrl when the ticket provides neither', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('/upload/request/')) {
+        return new Response(JSON.stringify({
+          upload_url: 'https://storage.googleapis.com/b',
+          upload_form: { key: 'events/EV/albums/1/PID', policy: 'P', signature: 'S' }, // no access_url / success_action_redirect
+        }), { status: 200 });
+      }
+      if (u.includes('storage.googleapis.com')) return new Response(null, { status: 303 }); // 303 with NO location header
+      if (u.includes('/shared-gallery/')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      throw new Error(`unexpected fetch: ${u}`);
+    });
+    const path = writePng();
+    try {
+      const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+      expect(result.photoId).toBe('PID');
+      expect(result.accessUrl).toBeUndefined();
+      // finishUrl was empty → Step 3 (the finish endpoint) is never called.
+      expect(spy.mock.calls.map((c) => String(c[0])).some((u) => u.includes('/ajax/upload/finish/'))).toBe(false);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
 });
 
 describe('EviteClient — addGuest (VERIFIED endpoint)', () => {

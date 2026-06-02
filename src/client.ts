@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { basename } from 'node:path';
 import {
   buildQueryString,
   formatApiError,
@@ -543,7 +544,7 @@ export class EviteClient {
     // ── Step 2: multipart POST to GCS (signed fields first, then `file`; no cookies).
     const form = new FormData();
     for (const [name, value] of Object.entries(ticket.upload_form)) form.append(name, value);
-    const filename = abs.split('/').pop() || 'photo';
+    const filename = basename(abs) || 'photo';
     form.append('file', new Blob([new Uint8Array(buffer)], { type: mimetype }), filename);
 
     const gcs = await fetch(ticket.upload_url, { method: 'POST', body: form, redirect: 'manual' });
@@ -559,6 +560,10 @@ export class EviteClient {
     const finishUrl = gcs.headers.get('location') ?? ticket.upload_form.success_action_redirect ?? '';
 
     // ── Step 3: hit Evite's finish endpoint (cookies) to finalize the object.
+    // Best-effort: GCS already holds the object (Step 2's 303 success), and Step 4
+    // registers it from the upload-ticket key — neither depends on this call. A
+    // finish-endpoint hiccup must not fail an upload that otherwise succeeded, so
+    // the error is intentionally swallowed.
     if (finishUrl) {
       const u = new URL(finishUrl, BASE_URL);
       await this.getHtml(`${u.pathname}${u.search}`).catch(() => undefined);

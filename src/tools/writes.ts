@@ -70,6 +70,23 @@ const broadcastArgs = z.object({
   confirm: schemaConfirm,
 });
 
+const uploadPhotoArgs = z.object({
+  event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
+  guest_id: z
+    .string()
+    .min(1)
+    .describe("Your guest id on the event (guestId from evite_list_guests — your own row, guestType host/cohost/guest)."),
+  path: z
+    .string()
+    .min(1)
+    .describe('Path to the local image file to upload (a leading ~ is expanded). JPEG/PNG/GIF/WebP/HEIC, max 20 MB.'),
+  mimetype: z
+    .string()
+    .optional()
+    .describe('Override the image mimetype (otherwise inferred from the file extension).'),
+  confirm: schemaConfirm,
+});
+
 const createEventArgs = z.object({
   title: z.string().min(1).describe('Event title.'),
   start_datetime: z.string().min(1).describe('Start datetime (ISO 8601, event-local). Required.'),
@@ -205,6 +222,35 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         message: args.message,
         groups: args.groups,
         participantCount: args.participant_count,
+      });
+      return textResult(data);
+    },
+  );
+
+  server.registerTool(
+    'evite_upload_photo',
+    {
+      description:
+        "Upload a local image to an Evite event's shared photo gallery. This really adds the " +
+        'photo to the event album. Needs your guest_id on the event (from evite_list_guests). ' +
+        'Confirm-gated: without confirm:true this returns a dry-run preview and uploads nothing.',
+      annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false }),
+      inputSchema: uploadPhotoArgs.shape,
+    },
+    async (raw) => {
+      const args = uploadPhotoArgs.parse(raw);
+      if (args.confirm !== true) {
+        return preview('upload_photo', {
+          event_id: args.event_id,
+          guest_id: args.guest_id,
+          path: args.path,
+          mimetype: args.mimetype,
+        });
+      }
+      const data = await client.uploadPhoto(args.event_id, {
+        path: args.path,
+        guestId: args.guest_id,
+        mimetype: args.mimetype,
       });
       return textResult(data);
     },

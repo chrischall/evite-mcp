@@ -96,6 +96,10 @@
       "description": "Send a private message to one guest (confirm-gated)"
     },
     {
+      "name": "evite_broadcast",
+      "description": "Broadcast a message to whole RSVP segments at once (confirm-gated)"
+    },
+    {
       "name": "evite_create_event",
       "description": "Create an event draft (confirm-gated)"
     },
@@ -126,6 +130,14 @@
     {
       "name": "evite_reinstate_event",
       "description": "Reinstate a cancelled event (confirm-gated)"
+    },
+    {
+      "name": "evite_duplicate_event",
+      "description": "Copy an event into a fresh draft (confirm-gated)"
+    },
+    {
+      "name": "evite_upload_photo",
+      "description": "Upload a local image to an event's shared photo album (confirm-gated)"
     },
     {
       "name": "evite_healthcheck",

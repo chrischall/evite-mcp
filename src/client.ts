@@ -1,9 +1,21 @@
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename } from 'node:path';
 import {
   buildQueryString,
   formatApiError,
   SessionNotAuthenticatedError,
 } from '@chrischall/mcp-utils';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
+import { mimetypeForPath, imageDimensions } from './image-meta.js';
+
+/** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
+const MAX_UPLOAD_BYTES = 20_000_000;
+
+/** Expand a leading `~` to the home directory (the only shell expansion we do). */
+function expandHome(p: string): string {
+  return p === '~' || p.startsWith('~/') ? homedir() + p.slice(1) : p;
+}
 
 /** The session-resolver signature the client depends on (injectable in tests). */
 export type SessionResolver = (opts?: ResolveSessionOptions) => Promise<ResolvedSession>;
@@ -91,6 +103,36 @@ export interface BroadcastInput {
   groups: string[];
   /** Recipient count the web UI sends along (informational); optional. */
   participantCount?: number;
+}
+
+/** Arguments to {@link EviteClient.uploadPhoto}. */
+export interface UploadPhotoInput {
+  /** Path to the local image file (a leading `~` is expanded). */
+  path: string;
+  /** The uploader's guest id on the event (from {@link EviteClient.listGuests}). */
+  guestId: string;
+  /** Override the mimetype — otherwise inferred from the file extension. */
+  mimetype?: string;
+}
+
+/** Result of {@link EviteClient.uploadPhoto}. */
+export interface UploadPhotoResult {
+  /** The id Evite assigned the photo. */
+  photoId: string;
+  /** A direct URL to the stored image, when the ticket returned one. */
+  accessUrl?: string;
+}
+
+/** The signed-upload ticket returned by `POST …/upload/request/`. */
+interface UploadTicket {
+  /** The GCS endpoint to POST the multipart upload to. */
+  upload_url: string;
+  /** A direct (signed) URL to the stored object. */
+  access_url?: string;
+  /** The object path; its last segment is the photo id. */
+  gcs_path?: string;
+  /** The GCS signed-POST form fields (key, policy, signature, …) sent before `file`. */
+  upload_form: Record<string, string>;
 }
 
 /** A guest to add to an event's draft guest list ({@link EviteClient.addGuest}). */
@@ -437,6 +479,106 @@ export class EviteClient {
       `/tsunami/v1/services/event/${encodeURIComponent(eventId)}/broadcast/`,
       body,
     );
+  }
+
+  /**
+   * Upload a photo to an event's shared gallery — a 4-step Google Cloud Storage
+   * signed-upload flow (VERIFIED from a captured upload ticket, 2026-06-02):
+   *
+   *   1. `POST /services/photos/v1/{eventId}/upload/request/` (cookies + CSRF) →
+   *      returns `{ upload_url, upload_form:{key,policy,signature,…}, access_url }`,
+   *      a GCS signed-POST ticket with the photo id embedded in `upload_form.key`.
+   *   2. `POST {upload_url}` to **GCS** as multipart — the signed-POST fields first,
+   *      then `file` last (no Evite cookies; the policy is the auth). GCS replies
+   *      `303` with `Location:` = the Evite finish URL.
+   *   3. `GET` that finish URL (cookies) to finalize the object into the album.
+   *   4. `POST /services/photos/v1/{eventId}/shared-gallery/?gid={guestId}` (cookies
+   *      + CSRF), body `{ photo_ids:[photoId] }` — registers it in the gallery.
+   *
+   * The GCS policy enforces `Content-Type == mimetype` and a 20 MB cap, so the
+   * mimetype declared in step 1 must match the Blob's type in step 2.
+   */
+  async uploadPhoto(eventId: string, input: UploadPhotoInput): Promise<UploadPhotoResult> {
+    const abs = expandHome(input.path);
+    let buffer: Buffer;
+    try {
+      buffer = readFileSync(abs);
+    } catch {
+      throw new Error(`Cannot read image file: ${input.path}`);
+    }
+    const mimetype = input.mimetype ?? mimetypeForPath(abs);
+    if (!mimetype) {
+      throw new Error(
+        `Unknown image type for "${input.path}" — use a .jpg/.png/.gif/.webp/.heic file or pass mimetype.`,
+      );
+    }
+    if (buffer.byteLength > MAX_UPLOAD_BYTES) {
+      throw new Error(
+        `Image is ${buffer.byteLength} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
+      );
+    }
+    const { width, height } = imageDimensions(buffer, mimetype);
+
+    // ── Step 1: signed-upload ticket from Evite.
+    const ticket = await this.write<UploadTicket>(
+      'POST',
+      `/services/photos/v1/${encodeURIComponent(eventId)}/upload/request/`,
+      {
+        upload_path: 'feed_photos',
+        event_id: eventId,
+        photo_id: '',
+        guest_id: input.guestId,
+        redirect: true,
+        mimetype,
+        width,
+        height,
+      },
+    );
+    if (!ticket?.upload_url || !ticket.upload_form) {
+      throw new Error('Evite upload/request did not return a usable upload ticket.');
+    }
+    const photoId =
+      (ticket.upload_form.key ?? ticket.gcs_path ?? '').split('/').filter(Boolean).pop() ?? '';
+    if (!photoId) throw new Error('Could not determine the photo id from the upload ticket.');
+
+    // ── Step 2: multipart POST to GCS (signed fields first, then `file`; no cookies).
+    const form = new FormData();
+    for (const [name, value] of Object.entries(ticket.upload_form)) form.append(name, value);
+    const filename = basename(abs) || 'photo';
+    form.append('file', new Blob([new Uint8Array(buffer)], { type: mimetype }), filename);
+
+    const gcs = await fetch(ticket.upload_url, { method: 'POST', body: form, redirect: 'manual' });
+    // Success is a 303 redirect (to success_action_redirect); accept 2xx too.
+    if (gcs.status !== 303 && !gcs.ok) {
+      const text = await gcs.text().catch(() => '');
+      throw new Error(
+        formatApiError(gcs.status, 'POST', ticket.upload_url, text, {
+          service: 'Google Cloud Storage',
+        }),
+      );
+    }
+    const finishUrl = gcs.headers.get('location') ?? ticket.upload_form.success_action_redirect ?? '';
+
+    // ── Step 3: hit Evite's finish endpoint (cookies) to finalize the object.
+    // Best-effort: GCS already holds the object (Step 2's 303 success), and Step 4
+    // registers it from the upload-ticket key — neither depends on this call. A
+    // finish-endpoint hiccup must not fail an upload that otherwise succeeded, so
+    // the error is intentionally swallowed.
+    if (finishUrl) {
+      const u = new URL(finishUrl, BASE_URL);
+      await this.getHtml(`${u.pathname}${u.search}`).catch(() => undefined);
+    }
+
+    // ── Step 4: register the photo in the event's shared gallery.
+    await this.write(
+      'POST',
+      `/services/photos/v1/${encodeURIComponent(eventId)}/shared-gallery/?gid=${encodeURIComponent(input.guestId)}`,
+      { photo_ids: [photoId] },
+    );
+
+    const result: UploadPhotoResult = { photoId };
+    if (ticket.access_url) result.accessUrl = ticket.access_url;
+    return result;
   }
 
   /**

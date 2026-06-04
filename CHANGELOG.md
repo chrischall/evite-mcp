@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/chrischall/evite-mcp/compare/v0.3.0...v0.3.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* adopt @fetchproxy/server 0.13.0 (bridge host failover + re-pairing) ([#22](https://github.com/chrischall/evite-mcp/issues/22)) ([b2ca0f9](https://github.com/chrischall/evite-mcp/commit/b2ca0f916bb87d48fe8e9298fa55d733b5a5ad9a))
+* adopt @fetchproxy/server 1.0.0 + @chrischall/mcp-utils 0.5.0 ([#24](https://github.com/chrischall/evite-mcp/issues/24)) ([d2dc631](https://github.com/chrischall/evite-mcp/commit/d2dc6319f2eba904a8dcaedfca0fa5492029b8ef))
+
 ## [0.3.0](https://github.com/chrischall/evite-mcp/compare/v0.2.1...v0.3.0) (2026-06-02)
 
 

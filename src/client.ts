@@ -7,6 +7,7 @@ import {
   readFileHead,
   SessionNotAuthenticatedError,
 } from '@chrischall/mcp-utils';
+import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
 import { mimetypeForPath, imageDimensions } from './image-meta.js';
 
@@ -26,6 +27,26 @@ const BASE_URL = 'https://www.evite.com';
 
 /** The cookie name carrying the (rotating) CSRF token. */
 const CSRF_COOKIE = 'csrftoken';
+
+/**
+ * Marks a {@link Response} that {@link EviteClient.write} already recovered from
+ * locally via a rotated-CSRF replay (tier (a)). The manager's `isExpired` reads
+ * this tag and treats the tagged response as NOT a session expiry, so the
+ * fresh-token retry does not ALSO trigger a re-login — keeping recovery capped at
+ * ONE step (CSRF-retry XOR re-login, never both, never a loop).
+ */
+const CSRF_RECOVERED = Symbol('eviteCsrfRecovered');
+
+/** Tag a response as already CSRF-recovered (see {@link CSRF_RECOVERED}). */
+function markCsrfRecovered(res: Response): Response {
+  (res as Response & { [CSRF_RECOVERED]?: boolean })[CSRF_RECOVERED] = true;
+  return res;
+}
+
+/** Whether a response was tagged as CSRF-recovered by {@link markCsrfRecovered}. */
+function isCsrfRecovered(res: Response): boolean {
+  return (res as Response & { [CSRF_RECOVERED]?: boolean })[CSRF_RECOVERED] === true;
+}
 
 /**
  * Read every `Set-Cookie` off a response as raw `name=value; attrs` strings,
@@ -264,17 +285,31 @@ export interface EviteClientOptions {
  * list tools even with no session configured; the error surfaces at call time).
  */
 export class EviteClient {
-  private readonly resolver: SessionResolver;
-  private session: ResolvedSession | undefined;
-  private resolving: Promise<ResolvedSession> | undefined;
+  /**
+   * The session lifecycle (single-flight login, clear-on-settle, and the
+   * exactly-one re-login-and-replay on a genuine expiry) lives in the shared
+   * {@link CookieSessionManager} — `login` is the injected resolver, and
+   * `isExpired` flags a 401/403 as a true session expiry (the re-login trigger).
+   * The CSRF-rotation tier stays evite-local in {@link write} (see there).
+   */
+  private readonly sessions: CookieSessionManager<ResolvedSession>;
 
   constructor(opts: EviteClientOptions = {}) {
-    this.resolver = opts.resolveSession ?? resolveSession;
+    const resolver = opts.resolveSession ?? resolveSession;
+    this.sessions = new CookieSessionManager<ResolvedSession>({
+      login: () => resolver(),
+      // A 401/403 is a genuine session expiry → re-login + one replay. EXCEPTION:
+      // a response {@link write} already recovered from via a rotated-CSRF replay
+      // is tagged ({@link CSRF_RECOVERED}) and treated as NOT expired, so the
+      // manager never re-logs-in on top of an evite-local CSRF retry (recovery
+      // stays capped at one step). Reads/HTML never carry the tag.
+      isExpired: (res) => (res.status === 401 || res.status === 403) && !isCsrfRecovered(res),
+    });
   }
 
   /** Report status and whether a session has been resolved yet. */
   health(): EviteHealth {
-    const resolved = this.session !== undefined;
+    const resolved = this.sessions.current !== undefined;
     return {
       ok: true,
       authMode: resolved ? 'resolved' : 'unresolved',
@@ -285,81 +320,24 @@ export class EviteClient {
   }
 
   /**
-   * Resolve (and memoize) the session, serializing concurrent first calls.
-   * Only successful resolutions are memoized — a rejected in-flight promise is
-   * cleared so the next call retries the resolver instead of rethrowing a
-   * cached transient failure (network blip, bridge hiccup, 5xx during login)
-   * forever.
-   */
-  private async getSession(): Promise<ResolvedSession> {
-    if (this.session) return this.session;
-    if (!this.resolving) {
-      this.resolving = this.resolver().catch((err: unknown) => {
-        // A new attempt is only created while `resolving` is unset, and this
-        // handler runs at rejection time — so it can only be clearing itself.
-        this.resolving = undefined;
-        throw err;
-      });
-    }
-    const session = await this.resolving;
-    this.session = session;
-    return session;
-  }
-
-  /**
-   * Drop the memoized session (and any in-flight resolution) so the next
-   * {@link getSession} re-runs the resolver — a fresh `loginWithPassword()` when
-   * EVITE_EMAIL/EVITE_PASSWORD are set. Used to recover from a genuine
-   * session-expiry 401/403 before surfacing the error.
-   */
-  private invalidateSession(): void {
-    this.session = undefined;
-    this.resolving = undefined;
-  }
-
-  /**
-   * Re-resolve the session (single-flight via {@link getSession}, reusing the
-   * cleared-on-reject pattern) and return it, or `undefined` if re-resolution
-   * itself fails (no creds configured, login rejected, …) — the caller then
-   * surfaces the original auth error rather than this one.
-   */
-  private async reauthenticate(): Promise<ResolvedSession | undefined> {
-    this.invalidateSession();
-    try {
-      return await this.getSession();
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
    * Issue an authenticated GET. `query` (when present) is appended; `status`
    * arrays become repeated params via {@link buildQueryString}. Maps 401/403 to
    * {@link SessionNotAuthenticatedError}; other non-2xx through
    * {@link formatApiError} (redaction + truncation — no token/body leakage).
+   *
+   * The manager's {@link CookieSessionManager.withSession} owns the single-flight
+   * login and the re-login-once-then-replay on a 401/403 expiry.
    */
   private async get<T>(path: string, query?: Record<string, unknown>): Promise<T> {
     const qs = query ? buildQueryString(query) : '';
     const url = `${BASE_URL}${path}${qs}`;
 
-    const send = (session: ResolvedSession): Promise<Response> =>
+    const response = await this.sessions.withSession((session) =>
       fetch(url, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'application/json' },
-      });
-
-    let session = await this.getSession();
-    let response = await send(session);
-
-    // A 401/403 on a read means the session expired — re-login once (when creds
-    // are configured) and replay before surfacing the sign-in error.
-    if (response.status === 401 || response.status === 403) {
-      const reauthed = await this.reauthenticate();
-      if (reauthed) {
-        session = reauthed;
-        response = await send(session);
-      }
-    }
+      }),
+    );
 
     if (response.status === 401 || response.status === 403) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
@@ -396,22 +374,13 @@ export class EviteClient {
 
   /** Authenticated GET returning the raw response text (for the SSR gallery pages). */
   private async getHtml(path: string): Promise<string> {
-    const send = (session: ResolvedSession): Promise<Response> =>
+    const response = await this.sessions.withSession((session) =>
       fetch(`${BASE_URL}${path}`, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'text/html' },
-      });
+      }),
+    );
 
-    let session = await this.getSession();
-    let response = await send(session);
-
-    if (response.status === 401 || response.status === 403) {
-      const reauthed = await this.reauthenticate();
-      if (reauthed) {
-        session = reauthed;
-        response = await send(session);
-      }
-    }
     if (response.status === 401 || response.status === 403) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
     }
@@ -518,31 +487,46 @@ export class EviteClient {
       return fetch(url, { method, headers, body: payload });
     };
 
-    let session = await this.getSession();
-    let response = await send(session);
-
-    // ── 401/403 recovery (capped at ONE replay total, so no infinite loop):
-    //   (a) Rotated CSRF — Evite rotates the `csrftoken` cookie mid-session and
-    //       403s a stale value, re-setting the fresh token on that same 403
-    //       response. Read it fresh, update the session, and replay with it.
-    //   (b) Genuine session expiry — re-resolve the session (a fresh login when
-    //       creds are configured) and replay once.
-    if (response.status === 401 || response.status === 403) {
-      const fresh = freshCsrfFromResponse(response);
-      if (fresh && fresh !== session.csrfToken) {
-        // (a) rotated-CSRF: replay with the fresh token, no re-login.
-        session = withFreshCsrf(session, fresh);
-        this.session = session;
-        response = await send(session);
-      } else {
-        // (b) re-login once (single-flight, cleared-on-reject).
-        const reauthed = await this.reauthenticate();
-        if (reauthed) {
-          session = reauthed;
-          response = await send(session);
+    // ── Two-tier 401/403 recovery, capped at ONE recovery total (never both,
+    //    never a loop):
+    //
+    //   (a) Rotated CSRF (evite-local, stays here) — Evite rotates the
+    //       `csrftoken` cookie mid-session and 403s a stale value, re-setting the
+    //       fresh token on that same 403 response. We read it fresh, update the
+    //       session in place, and replay with it — NO re-login. This is the
+    //       inner tier and it spends the single recovery, then reports the
+    //       response as not-expired (`recovered` flips) so the manager's expiry
+    //       tier does not also fire.
+    //
+    //   (b) Genuine session expiry (delegated to the manager) — a 401/403 with
+    //       NO freshly-rotated token is a real expiry: the manager re-logs-in
+    //       (single-flight, cleared-on-settle) and replays the call exactly once.
+    //
+    // `recovered` is the per-write one-recovery budget shared across both of the
+    // closure's invocations (the original call and the manager's re-login replay):
+    // once a recovery — CSRF-retry OR re-login — has been spent, neither tier
+    // fires again, so recovery is capped at ONE step.
+    let recovered = false;
+    const response = await this.sessions.withSession(async (session) => {
+      const res = await send(session);
+      if ((res.status === 401 || res.status === 403) && !recovered) {
+        recovered = true; // spend the single recovery (whichever tier takes it).
+        const fresh = freshCsrfFromResponse(res);
+        if (fresh && fresh !== session.csrfToken) {
+          // (a) rotated-CSRF: replay with the fresh token, NO re-login. Mutate
+          // the manager's live session in place so the rotation persists, and
+          // tag the replay so the manager's expiry tier does not also fire.
+          const rotated = withFreshCsrf(session, fresh);
+          session.cookieHeader = rotated.cookieHeader;
+          session.csrfToken = rotated.csrfToken;
+          return markCsrfRecovered(await send(session));
         }
+        // (b) no fresh token → a genuine expiry: leave the response untagged so
+        // the manager's `isExpired` sees it, invalidates, re-logs-in, and replays
+        // this closure exactly once (where `recovered` now blocks a second tier).
       }
-    }
+      return res;
+    });
 
     if (response.status === 401 || response.status === 403) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
@@ -869,7 +853,7 @@ export class EviteClient {
    * is the `/invitation/{newId}/` segment of the redirect target.
    */
   async duplicateEvent(eventId: string): Promise<DuplicateResult> {
-    const session = await this.getSession();
+    const session = await this.sessions.ensure();
     const url = `${BASE_URL}/plus/create/${encodeURIComponent(eventId)}/copy/?previous=my_events`;
     const headers: Record<string, string> = {
       cookie: session.cookieHeader,

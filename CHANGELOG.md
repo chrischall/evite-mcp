@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.2](https://github.com/chrischall/evite-mcp/compare/v0.3.1...v0.3.2) (2026-06-09)
+
+
+### Bug Fixes
+
+* clear memoized session promise on rejection so resolution retries ([#28](https://github.com/chrischall/evite-mcp/issues/28)) ([af18089](https://github.com/chrischall/evite-mcp/commit/af1808952e47b259ce92e4caa3c57fec4170ecc6))
+* read rotated CSRF fresh per write + re-login on session expiry ([#30](https://github.com/chrischall/evite-mcp/issues/30)) ([da697cc](https://github.com/chrischall/evite-mcp/commit/da697cc55c15b8d8b7249514573a439ffcc9af48))
+
+
+### Refactor
+
+* adopt CookieSessionManager for session lifecycle ([#31](https://github.com/chrischall/evite-mcp/issues/31)) ([17f42dd](https://github.com/chrischall/evite-mcp/commit/17f42ddbbd2bbf82db41abd8b8abfbca51cd0248))
+
 ## [0.3.1](https://github.com/chrischall/evite-mcp/compare/v0.3.0...v0.3.1) (2026-06-04)
 
 

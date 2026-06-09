@@ -1,7 +1,7 @@
 {
   "name": "evite",
   "displayName": "Evite",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Evite tools for Claude — list events, guest lists & RSVPs, RSVP, message guests, and create/edit events via MCP",
   "author": {
     "name": "Chris Chall"

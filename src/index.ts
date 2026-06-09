@@ -11,7 +11,7 @@ const client = new EviteClient();
 
 await runMcp({
   name: 'evite-mcp',
-  version: '0.3.1', // x-release-please-version
+  version: '0.3.2', // x-release-please-version
   banner: '[evite-mcp] This project was developed and is maintained by AI. Use at your own discretion.',
   deps: client,
   tools: [

@@ -2,7 +2,13 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { EviteClient, CSRF_HEADER } from '../src/client.js';
+import {
+  EviteClient,
+  CSRF_HEADER,
+  readSetCookies,
+  freshCsrfFromResponse,
+  withFreshCsrf,
+} from '../src/client.js';
 import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
 
 /**
@@ -703,5 +709,69 @@ describe('EviteClient — write auth recovery (rotated CSRF + re-login)', () => 
     );
     // Original + exactly one replay = two requests, then it gives up.
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('cookie/CSRF helpers (pure)', () => {
+  /** A response-like object exposing only the headers shape under test. */
+  const resp = (headers: unknown): Response =>
+    ({ headers } as unknown as Response);
+
+  describe('readSetCookies', () => {
+    it('prefers getSetCookie() when present', () => {
+      expect(readSetCookies(resp({ getSetCookie: () => ['a=1; Path=/', 'b=2'] }))).toEqual([
+        'a=1; Path=/',
+        'b=2',
+      ]);
+    });
+
+    it('falls back to splitting the joined set-cookie header (no getSetCookie)', () => {
+      expect(
+        readSetCookies(resp({ get: (n: string) => (n === 'set-cookie' ? 'a=1; Path=/, b=2' : null) })),
+      ).toEqual(['a=1; Path=/', 'b=2']);
+    });
+
+    it('returns [] when the joined header is absent', () => {
+      expect(readSetCookies(resp({ get: () => null }))).toEqual([]);
+    });
+
+    it('returns [] when neither getSetCookie nor get is available', () => {
+      expect(readSetCookies(resp({}))).toEqual([]);
+    });
+  });
+
+  describe('freshCsrfFromResponse', () => {
+    const withCookies = (...cookies: string[]): Response =>
+      resp({ getSetCookie: () => cookies });
+
+    it('returns the rotated csrftoken value', () => {
+      expect(freshCsrfFromResponse(withCookies('x=1; Path=/', 'csrftoken=NEW; Secure'))).toBe('NEW');
+    });
+
+    it('skips non-csrftoken cookies', () => {
+      expect(freshCsrfFromResponse(withCookies('sessionid=abc; Path=/'))).toBeUndefined();
+    });
+
+    it('skips a malformed pair with no "="', () => {
+      expect(freshCsrfFromResponse(withCookies('justaflag'))).toBeUndefined();
+    });
+
+    it('treats an empty csrftoken value as no rotation', () => {
+      expect(freshCsrfFromResponse(withCookies('csrftoken=; Path=/'))).toBeUndefined();
+    });
+  });
+
+  describe('withFreshCsrf', () => {
+    it('replaces the csrftoken pair in-place and updates the field', () => {
+      const out = withFreshCsrf({ cookieHeader: 'a=1; csrftoken=old; b=2', csrfToken: 'old' }, 'new');
+      expect(out.cookieHeader).toBe('a=1; csrftoken=new; b=2');
+      expect(out.csrfToken).toBe('new');
+    });
+
+    it('appends a csrftoken pair when the jar has none', () => {
+      const out = withFreshCsrf({ cookieHeader: 'a=1; b=2', csrfToken: '' }, 'new');
+      expect(out.cookieHeader).toBe('a=1; b=2; csrftoken=new');
+      expect(out.csrfToken).toBe('new');
+    });
   });
 });

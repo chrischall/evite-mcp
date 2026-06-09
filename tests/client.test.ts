@@ -306,6 +306,20 @@ describe('EviteClient — getHtml / write error paths', () => {
     await expect(newClient().listTemplates('party')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
 
+  it('surfaces the sign-in error when an HTML-scrape re-login also fails (getHtml false branch)', async () => {
+    // Mirrors the get() false-branch test (resolver rejects on re-login →
+    // reauthenticate() returns undefined → the inner replay block is skipped
+    // and the 401 surfaces) for the getHtml path.
+    mockFetch({ status: 401, rawBody: '' });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockResolvedValueOnce(fakeSession)
+      .mockRejectedValueOnce(new SessionNotAuthenticatedError('Evite', 'https://www.evite.com'));
+    const client = new EviteClient({ resolveSession: resolver });
+
+    await expect(client.listTemplates('party')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
   it('surfaces a non-2xx HTML-scrape failure with the path', async () => {
     mockFetch({ status: 500, rawBody: 'oops' });
     await expect(newClient().listTemplates('party')).rejects.toThrow(/Evite error 500/);

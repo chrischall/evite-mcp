@@ -219,6 +219,34 @@ describe('EviteClient — error handling', () => {
   });
 });
 
+describe('EviteClient — read re-login on expiry', () => {
+  it('re-logs-in once on a 401 GET (creds configured) and replays the read', async () => {
+    mockFetch({ status: 401, rawBody: '' }, { body: eventsList });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockResolvedValueOnce(fakeSession)
+      .mockResolvedValueOnce(fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+
+    const result = await client.listEvents({ filterBy: 'all', status: ['past'] });
+    expect(result.events).toEqual(eventsList.events);
+    expect(resolver).toHaveBeenCalledTimes(2); // initial + one re-login
+  });
+
+  it('surfaces the sign-in error when re-login also fails (no creds)', async () => {
+    mockFetch({ status: 401, rawBody: '' });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockResolvedValueOnce(fakeSession)
+      .mockRejectedValueOnce(new SessionNotAuthenticatedError('Evite', 'https://www.evite.com'));
+    const client = new EviteClient({ resolveSession: resolver });
+
+    await expect(
+      client.listEvents({ filterBy: 'all', status: ['past'] }),
+    ).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+});
+
 describe('EviteClient — health', () => {
   it('reports unresolved before the first call', () => {
     const client = newClient();
@@ -276,6 +304,20 @@ describe('EviteClient — getHtml / write error paths', () => {
   it('maps a 401 on an HTML scrape (listTemplates) to SessionNotAuthenticatedError', async () => {
     mockFetch({ status: 401, rawBody: '' });
     await expect(newClient().listTemplates('party')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
+  it('surfaces the sign-in error when an HTML-scrape re-login also fails (getHtml false branch)', async () => {
+    // Mirrors the get() false-branch test (resolver rejects on re-login →
+    // reauthenticate() returns undefined → the inner replay block is skipped
+    // and the 401 surfaces) for the getHtml path.
+    mockFetch({ status: 401, rawBody: '' });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockResolvedValueOnce(fakeSession)
+      .mockRejectedValueOnce(new SessionNotAuthenticatedError('Evite', 'https://www.evite.com'));
+    const client = new EviteClient({ resolveSession: resolver });
+
+    await expect(client.listTemplates('party')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
 
   it('surfaces a non-2xx HTML-scrape failure with the path', async () => {

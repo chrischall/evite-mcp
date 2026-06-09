@@ -307,9 +307,9 @@ describe('EviteClient — getHtml / write error paths', () => {
   });
 
   it('surfaces the sign-in error when an HTML-scrape re-login also fails (getHtml false branch)', async () => {
-    // Mirrors the get() false-branch test (resolver rejects on re-login →
-    // reauthenticate() returns undefined → the inner replay block is skipped
-    // and the 401 surfaces) for the getHtml path.
+    // Mirrors the get() false-branch test (the manager's re-login rejects →
+    // withSession() surfaces the original 401 response → it maps to the
+    // sign-in error) for the getHtml path.
     mockFetch({ status: 401, rawBody: '' });
     const resolver = vi
       .fn<() => Promise<typeof fakeSession>>()

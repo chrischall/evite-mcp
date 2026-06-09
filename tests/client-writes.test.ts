@@ -612,3 +612,96 @@ describe('EviteClient — duplicateEvent no-redirect branch', () => {
     await expect(newClient({ cookieHeader: 'c=1' }).duplicateEvent('E')).rejects.toThrow();
   });
 });
+
+describe('EviteClient — write auth recovery (rotated CSRF + re-login)', () => {
+  // A queue-driven fetch mock that lets each response carry Set-Cookie headers
+  // (so the client can read a freshly-rotated csrftoken off a 403).
+  function mockFetchWithCookies(
+    ...responses: Array<{ status?: number; body?: unknown; setCookie?: string[] }>
+  ) {
+    let i = 0;
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      const r = responses[Math.min(i, responses.length - 1)]!;
+      i++;
+      const headers = new Headers();
+      for (const c of r.setCookie ?? []) headers.append('set-cookie', c);
+      const body = r.body !== undefined ? JSON.stringify(r.body) : '';
+      return new Response(body, { status: r.status ?? 200, headers }) as unknown as Response;
+    });
+  }
+
+  it('(a) replays a rotated-CSRF 403 with the fresh token and succeeds — no re-login, no auth error', async () => {
+    // First write 403s and rotates the csrftoken cookie; replay must carry it.
+    const spy = mockFetchWithCookies(
+      { status: 403, setCookie: ['csrftoken=ROTATED456; Path=/; Secure'] },
+      { status: 200, body: { ok: true } },
+    );
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+
+    const result = await client.cancelEvent('EVENTID0');
+    expect(result).toEqual({ ok: true });
+
+    // Exactly two requests; the replay carried the fresh token in the CSRF header.
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(headersOf(spy, 0)[CSRF_HEADER]).toBe('tok123');
+    expect(headersOf(spy, 1)[CSRF_HEADER]).toBe('ROTATED456');
+    // The rotated token also went back into the cookie jar of the replay.
+    expect(headersOf(spy, 1).cookie).toContain('csrftoken=ROTATED456');
+    // The session was NOT re-resolved (rotation is not an expiry).
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it('(b) re-logs-in once on a genuine 401 (no rotated token) and replays the write', async () => {
+    // 401 with no fresh csrftoken → re-resolve the session, then the replay 200s.
+    const spy = mockFetchWithCookies(
+      { status: 401 },
+      { status: 200, body: { ok: true } },
+    );
+    const sessionA = { cookieHeader: 'x-evite-session=old; csrftoken=tokA', csrfToken: 'tokA' };
+    const sessionB = { cookieHeader: 'x-evite-session=new; csrftoken=tokB', csrfToken: 'tokB' };
+    const resolver = vi
+      .fn<() => Promise<typeof sessionA>>()
+      .mockResolvedValueOnce(sessionA)
+      .mockResolvedValueOnce(sessionB);
+    const client = new EviteClient({ resolveSession: resolver });
+
+    const result = await client.cancelEvent('EVENTID0');
+    expect(result).toEqual({ ok: true });
+    // Re-login happened (resolver called twice) and the replay used session B.
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(headersOf(spy, 1)[CSRF_HEADER]).toBe('tokB');
+    expect(headersOf(spy, 1).cookie).toContain('x-evite-session=new');
+  });
+
+  it('(b) a 401 with NO creds (resolver throws on re-login) still surfaces the sign-in error', async () => {
+    // Both the original 401 and the re-login fail → SessionNotAuthenticatedError.
+    mockFetchWithCookies({ status: 401 });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockResolvedValueOnce(fakeSession)
+      .mockRejectedValueOnce(new SessionNotAuthenticatedError('Evite', 'https://www.evite.com'));
+    const client = new EviteClient({ resolveSession: resolver });
+
+    await expect(client.cancelEvent('EVENTID0')).rejects.toBeInstanceOf(
+      SessionNotAuthenticatedError,
+    );
+  });
+
+  it('caps recovery at one replay — a persistent 403 surfaces rather than looping', async () => {
+    // Every response 403s and keeps rotating the token: the client must NOT loop.
+    const spy = mockFetchWithCookies({
+      status: 403,
+      setCookie: ['csrftoken=KEEPS-ROTATING; Path=/'],
+    });
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+
+    await expect(client.cancelEvent('EVENTID0')).rejects.toBeInstanceOf(
+      SessionNotAuthenticatedError,
+    );
+    // Original + exactly one replay = two requests, then it gives up.
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});

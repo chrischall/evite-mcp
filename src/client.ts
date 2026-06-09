@@ -24,6 +24,63 @@ export type SessionResolver = (opts?: ResolveSessionOptions) => Promise<Resolved
 /** Base host for Evite's internal `/services/` API. */
 const BASE_URL = 'https://www.evite.com';
 
+/** The cookie name carrying the (rotating) CSRF token. */
+const CSRF_COOKIE = 'csrftoken';
+
+/**
+ * Read every `Set-Cookie` off a response as raw `name=value; attrs` strings,
+ * preferring `getSetCookie()` (Node ≥18.14) and falling back to a split of the
+ * joined header. Mirrors {@link auth-login.readSetCookies}.
+ */
+function readSetCookies(response: Response): string[] {
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  if (typeof headers.getSetCookie === 'function') return headers.getSetCookie();
+  const joined = typeof headers.get === 'function' ? headers.get('set-cookie') : null;
+  if (!joined) return [];
+  return joined.split(/,\s*(?=[^;,\s]+=)/);
+}
+
+/**
+ * Pull the fresh `csrftoken` value out of a response's `Set-Cookie` headers, if
+ * Evite rotated it on this response. Returns `undefined` when no (non-empty)
+ * csrftoken cookie was set.
+ */
+function freshCsrfFromResponse(response: Response): string | undefined {
+  for (const raw of readSetCookies(response)) {
+    const firstPair = raw.split(';', 1)[0]?.trim() ?? '';
+    const eq = firstPair.indexOf('=');
+    if (eq <= 0) continue;
+    if (firstPair.slice(0, eq).trim() !== CSRF_COOKIE) continue;
+    const value = firstPair.slice(eq + 1).trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Return a copy of {@link session} with its CSRF token updated to {@link token}
+ * — in BOTH the standalone `csrfToken` field and the `csrftoken=` pair embedded
+ * in `cookieHeader` (the GET/write cookie jar). Keeps the two in lock-step so a
+ * replayed request sends a consistent jar + header.
+ */
+function withFreshCsrf(session: ResolvedSession, token: string): ResolvedSession {
+  const pairs = session.cookieHeader
+    .split(';')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  let replaced = false;
+  const next = pairs.map((p) => {
+    const eq = p.indexOf('=');
+    if (eq > 0 && p.slice(0, eq).trim() === CSRF_COOKIE) {
+      replaced = true;
+      return `${CSRF_COOKIE}=${token}`;
+    }
+    return p;
+  });
+  if (!replaced) next.push(`${CSRF_COOKIE}=${token}`);
+  return { cookieHeader: next.join('; '), csrfToken: token };
+}
+
 /**
  * The request header carrying the CSRF token on writes.
  *
@@ -249,20 +306,59 @@ export class EviteClient {
   }
 
   /**
+   * Drop the memoized session (and any in-flight resolution) so the next
+   * {@link getSession} re-runs the resolver — a fresh `loginWithPassword()` when
+   * EVITE_EMAIL/EVITE_PASSWORD are set. Used to recover from a genuine
+   * session-expiry 401/403 before surfacing the error.
+   */
+  private invalidateSession(): void {
+    this.session = undefined;
+    this.resolving = undefined;
+  }
+
+  /**
+   * Re-resolve the session (single-flight via {@link getSession}, reusing the
+   * cleared-on-reject pattern) and return it, or `undefined` if re-resolution
+   * itself fails (no creds configured, login rejected, …) — the caller then
+   * surfaces the original auth error rather than this one.
+   */
+  private async reauthenticate(): Promise<ResolvedSession | undefined> {
+    this.invalidateSession();
+    try {
+      return await this.getSession();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Issue an authenticated GET. `query` (when present) is appended; `status`
    * arrays become repeated params via {@link buildQueryString}. Maps 401/403 to
    * {@link SessionNotAuthenticatedError}; other non-2xx through
    * {@link formatApiError} (redaction + truncation — no token/body leakage).
    */
   private async get<T>(path: string, query?: Record<string, unknown>): Promise<T> {
-    const session = await this.getSession();
     const qs = query ? buildQueryString(query) : '';
     const url = `${BASE_URL}${path}${qs}`;
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { cookie: session.cookieHeader, accept: 'application/json' },
-    });
+    const send = (session: ResolvedSession): Promise<Response> =>
+      fetch(url, {
+        method: 'GET',
+        headers: { cookie: session.cookieHeader, accept: 'application/json' },
+      });
+
+    let session = await this.getSession();
+    let response = await send(session);
+
+    // A 401/403 on a read means the session expired — re-login once (when creds
+    // are configured) and replay before surfacing the sign-in error.
+    if (response.status === 401 || response.status === 403) {
+      const reauthed = await this.reauthenticate();
+      if (reauthed) {
+        session = reauthed;
+        response = await send(session);
+      }
+    }
 
     if (response.status === 401 || response.status === 403) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
@@ -299,11 +395,22 @@ export class EviteClient {
 
   /** Authenticated GET returning the raw response text (for the SSR gallery pages). */
   private async getHtml(path: string): Promise<string> {
-    const session = await this.getSession();
-    const response = await fetch(`${BASE_URL}${path}`, {
-      method: 'GET',
-      headers: { cookie: session.cookieHeader, accept: 'text/html' },
-    });
+    const send = (session: ResolvedSession): Promise<Response> =>
+      fetch(`${BASE_URL}${path}`, {
+        method: 'GET',
+        headers: { cookie: session.cookieHeader, accept: 'text/html' },
+      });
+
+    let session = await this.getSession();
+    let response = await send(session);
+
+    if (response.status === 401 || response.status === 403) {
+      const reauthed = await this.reauthenticate();
+      if (reauthed) {
+        session = reauthed;
+        response = await send(session);
+      }
+    }
     if (response.status === 401 || response.status === 403) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
     }
@@ -396,21 +503,45 @@ export class EviteClient {
     // `undefined` → no request body (e.g. the DELETE remove-guest call).
     body?: unknown,
   ): Promise<T> {
-    const session = await this.getSession();
     const url = `${BASE_URL}${path}`;
+    const payload = body === undefined ? undefined : JSON.stringify(body);
 
-    const headers: Record<string, string> = {
-      cookie: session.cookieHeader,
-      accept: 'application/json',
-      'content-type': 'application/json',
+    // One write request with the given session's cookies + CSRF header.
+    const send = (session: ResolvedSession): Promise<Response> => {
+      const headers: Record<string, string> = {
+        cookie: session.cookieHeader,
+        accept: 'application/json',
+        'content-type': 'application/json',
+      };
+      if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
+      return fetch(url, { method, headers, body: payload });
     };
-    if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let session = await this.getSession();
+    let response = await send(session);
+
+    // ── 401/403 recovery (capped at ONE replay total, so no infinite loop):
+    //   (a) Rotated CSRF — Evite rotates the `csrftoken` cookie mid-session and
+    //       403s a stale value, re-setting the fresh token on that same 403
+    //       response. Read it fresh, update the session, and replay with it.
+    //   (b) Genuine session expiry — re-resolve the session (a fresh login when
+    //       creds are configured) and replay once.
+    if (response.status === 401 || response.status === 403) {
+      const fresh = freshCsrfFromResponse(response);
+      if (fresh && fresh !== session.csrfToken) {
+        // (a) rotated-CSRF: replay with the fresh token, no re-login.
+        session = withFreshCsrf(session, fresh);
+        this.session = session;
+        response = await send(session);
+      } else {
+        // (b) re-login once (single-flight, cleared-on-reject).
+        const reauthed = await this.reauthenticate();
+        if (reauthed) {
+          session = reauthed;
+          response = await send(session);
+        }
+      }
+    }
 
     if (response.status === 401 || response.status === 403) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');

@@ -108,6 +108,24 @@ describe('EviteClient — listEvents', () => {
     await Promise.all([p1, p2]);
     expect(resolver).toHaveBeenCalledTimes(1);
   });
+
+  it('retries session resolution after a transient failure instead of caching the rejection', async () => {
+    mockFetch({ body: eventsList });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockRejectedValueOnce(new Error('transient network blip'))
+      .mockResolvedValueOnce(fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+
+    await expect(client.listEvents({ filterBy: 'all', status: ['past'] })).rejects.toThrow(
+      'transient network blip',
+    );
+
+    // Second call must invoke the resolver again — not rethrow the cached rejection.
+    const result = await client.listEvents({ filterBy: 'all', status: ['past'] });
+    expect(result.events).toEqual(eventsList.events);
+    expect(resolver).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('EviteClient — single-event sub-resources', () => {

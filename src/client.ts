@@ -226,11 +226,22 @@ export class EviteClient {
     };
   }
 
-  /** Resolve (and memoize) the session, serializing concurrent first calls. */
+  /**
+   * Resolve (and memoize) the session, serializing concurrent first calls.
+   * Only successful resolutions are memoized — a rejected in-flight promise is
+   * cleared so the next call retries the resolver instead of rethrowing a
+   * cached transient failure (network blip, bridge hiccup, 5xx during login)
+   * forever.
+   */
   private async getSession(): Promise<ResolvedSession> {
     if (this.session) return this.session;
     if (!this.resolving) {
-      this.resolving = this.resolver();
+      this.resolving = this.resolver().catch((err: unknown) => {
+        // A new attempt is only created while `resolving` is unset, and this
+        // handler runs at rejection time — so it can only be clearing itself.
+        this.resolving = undefined;
+        throw err;
+      });
     }
     const session = await this.resolving;
     this.session = session;

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCP server for **Evite** event management — talks to evite.com's internal `/services/` (and `/ajax/`, `/tsunami/`) API using the session cookies a signed-in browser holds (Evite has no public API). Cookie-session archetype.
 
-**5 read tools + 13 confirm-gated write tools** (plus `evite_healthcheck`). Writes default to a dry-run preview and only mutate on `confirm: true`.
+**6 read tools + 13 confirm-gated write tools** (plus `evite_healthcheck`). Writes default to a dry-run preview and only mutate on `confirm: true`.
 
 Three auth tiers, in priority order:
 

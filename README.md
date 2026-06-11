@@ -1,5 +1,9 @@
 # evite-mcp
 
+[![CI](https://github.com/chrischall/evite-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/chrischall/evite-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/evite-mcp)](https://www.npmjs.com/package/evite-mcp)
+[![license](https://img.shields.io/npm/l/evite-mcp)](LICENSE)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server for [Evite](https://www.evite.com) — read and act on your events as both **guest** (invitations received) and **host** (events you created): list events, view guest lists & RSVP tallies, RSVP, message guests, and create/edit events. Built on [`@chrischall/mcp-utils`](https://github.com/chrischall/mcp-utils).
 
 > **Status: read + write tools live.** The five read tools work against Evite's internal API, authenticating from email/password (tier-1, `POST /ajax_login`), a raw cookie env var, or a signed-in browser tab (fetchproxy bootstrap). The thirteen write tools are **confirm-gated** — without `confirm: true` they only return a dry-run preview and send nothing — and their endpoints are **live-verified** (see [`docs/EVITE-API.md`](docs/EVITE-API.md)); a couple of request *bodies* are still assumed rather than captured ([#3](https://github.com/chrischall/evite-mcp/issues/3)).

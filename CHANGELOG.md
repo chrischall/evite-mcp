@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.3](https://github.com/chrischall/evite-mcp/compare/v0.3.2...v0.3.3) (2026-06-13)
+
+
+### Bug Fixes
+
+* bot PRs bypass the CI gate unconditionally ([#36](https://github.com/chrischall/evite-mcp/issues/36)) ([afddf44](https://github.com/chrischall/evite-mcp/commit/afddf44376c1b2e0f550b7f205a7c7330d9ab052))
+
+
+### Documentation
+
+* add CLAUDE.md ([#32](https://github.com/chrischall/evite-mcp/issues/32)) ([e837a53](https://github.com/chrischall/evite-mcp/commit/e837a537b0fafd2df5a2f6184914d370004fa75f))
+* add MIT LICENSE file and README badges ([#34](https://github.com/chrischall/evite-mcp/issues/34)) ([5097e7c](https://github.com/chrischall/evite-mcp/commit/5097e7cc2ec9d6f3c2c8091cf8ba23a67d82ca24))
+
 ## [0.3.2](https://github.com/chrischall/evite-mcp/compare/v0.3.1...v0.3.2) (2026-06-09)
 
 

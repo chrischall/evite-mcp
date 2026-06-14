@@ -118,9 +118,12 @@ All endpoints are live-verified (probe 2026-06-01/02) — see `docs/EVITE-API.md
 - `manifest.json`, `server.json` (`$.version` + `$.packages[*].version`).
 - `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`$.plugins[*].version` + `$.metadata.version`).
 
+<!-- pr-workflow:v2 -->
 ## Pull requests & release notes
 
-**Default workflow: branch + PR, even for solo work.** Apply exactly one label so the change lands in the right CHANGELOG section (`feat:` → Features, `fix:` → Bug Fixes, `docs:` → Documentation, etc.). The PR title becomes the changelog bullet — write it user-facing.
+**Default workflow: branch + PR, even for solo work.** Apply exactly one label so the change lands in the right CHANGELOG section (`feat:` → Features, `fix:` → Bug Fixes, `docs:` → Documentation, etc.).
+
+The **PR title MUST be a Conventional Commit**, written user-facing (`fix(scope): …`, `feat(scope): …`), not internal shorthand. Because the repo squash-merges, the PR title *becomes the squash commit's subject line* — the only thing release-please parses to pick the version bump and changelog section. Only `feat` (minor), `fix` (patch), and `!`/`BREAKING CHANGE` (major) cut a release; `perf`/`refactor`/`docs` show in the changelog without bumping; `ci`/`test`/`build`/`chore` are recognised but hidden (see `release-please-config.json` → `changelog-sections`). A title without a conventional type is invisible to release-please — no bump, no changelog line. Prefixes in *individual commits* don't help; squash keeps only the title.
 
 ### How PRs merge
 

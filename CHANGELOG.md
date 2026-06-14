@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/chrischall/evite-mcp/compare/v0.3.3...v0.3.4) (2026-06-14)
+
+
+### Documentation
+
+* require Conventional Commit PR titles for release-please ([#40](https://github.com/chrischall/evite-mcp/issues/40)) ([6c0b500](https://github.com/chrischall/evite-mcp/commit/6c0b50031922661a381525f87fde698815a8a165))
+
 ## [0.3.3](https://github.com/chrischall/evite-mcp/compare/v0.3.2...v0.3.3) (2026-06-13)
 
 

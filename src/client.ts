@@ -2,8 +2,10 @@ import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import {
   buildQueryString,
+  CookieJar,
   fileBlob,
   formatApiError,
+  parseCookieHeader,
   readFileHead,
   SessionNotAuthenticatedError,
 } from '@chrischall/mcp-utils';
@@ -49,58 +51,33 @@ function isCsrfRecovered(res: Response): boolean {
 }
 
 /**
- * Read every `Set-Cookie` off a response as raw `name=value; attrs` strings,
- * preferring `getSetCookie()` (Node ≥18.14) and falling back to a split of the
- * joined header. Mirrors {@link auth-login.readSetCookies}.
- */
-export function readSetCookies(response: Response): string[] {
-  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
-  if (typeof headers.getSetCookie === 'function') return headers.getSetCookie();
-  const joined = typeof headers.get === 'function' ? headers.get('set-cookie') : null;
-  if (!joined) return [];
-  return joined.split(/,\s*(?=[^;,\s]+=)/);
-}
-
-/**
  * Pull the fresh `csrftoken` value out of a response's `Set-Cookie` headers, if
  * Evite rotated it on this response. Returns `undefined` when no (non-empty)
- * csrftoken cookie was set.
+ * csrftoken cookie was set. Set-Cookie reading is delegated to the shared
+ * {@link CookieJar} (`getSetCookie()` preferred, joined-header split fallback,
+ * deletion markers dropped).
  */
 export function freshCsrfFromResponse(response: Response): string | undefined {
-  for (const raw of readSetCookies(response)) {
-    // split(';', 1) always yields exactly one element, so [0] is never undefined.
-    const firstPair = raw.split(';', 1)[0]!.trim();
-    const eq = firstPair.indexOf('=');
-    if (eq <= 0) continue;
-    if (firstPair.slice(0, eq).trim() !== CSRF_COOKIE) continue;
-    const value = firstPair.slice(eq + 1).trim();
-    if (value) return value;
-  }
-  return undefined;
+  const jar = new CookieJar();
+  jar.absorb(response.headers);
+  return jar.get(CSRF_COOKIE);
 }
 
 /**
  * Return a copy of {@link session} with its CSRF token updated to {@link token}
  * — in BOTH the standalone `csrfToken` field and the `csrftoken=` pair embedded
  * in `cookieHeader` (the GET/write cookie jar). Keeps the two in lock-step so a
- * replayed request sends a consistent jar + header.
+ * replayed request sends a consistent jar + header. The header is parsed with
+ * the shared {@link parseCookieHeader} (first-`=` split, insertion order kept),
+ * so an existing `csrftoken` is replaced in place and a missing one appended.
  */
 export function withFreshCsrf(session: ResolvedSession, token: string): ResolvedSession {
-  const pairs = session.cookieHeader
-    .split(';')
-    .map((p) => p.trim())
-    .filter(Boolean);
-  let replaced = false;
-  const next = pairs.map((p) => {
-    const eq = p.indexOf('=');
-    if (eq > 0 && p.slice(0, eq).trim() === CSRF_COOKIE) {
-      replaced = true;
-      return `${CSRF_COOKIE}=${token}`;
-    }
-    return p;
-  });
-  if (!replaced) next.push(`${CSRF_COOKIE}=${token}`);
-  return { cookieHeader: next.join('; '), csrfToken: token };
+  const cookies = parseCookieHeader(session.cookieHeader);
+  cookies[CSRF_COOKIE] = token;
+  const cookieHeader = Object.entries(cookies)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('; ');
+  return { cookieHeader, csrfToken: token };
 }
 
 /**

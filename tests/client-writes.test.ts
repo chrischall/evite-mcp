@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import {
   EviteClient,
   CSRF_HEADER,
-  readSetCookies,
   freshCsrfFromResponse,
   withFreshCsrf,
 } from '../src/client.js';
@@ -717,35 +716,24 @@ describe('cookie/CSRF helpers (pure)', () => {
   const resp = (headers: unknown): Response =>
     ({ headers } as unknown as Response);
 
-  describe('readSetCookies', () => {
-    it('prefers getSetCookie() when present', () => {
-      expect(readSetCookies(resp({ getSetCookie: () => ['a=1; Path=/', 'b=2'] }))).toEqual([
-        'a=1; Path=/',
-        'b=2',
-      ]);
-    });
-
-    it('falls back to splitting the joined set-cookie header (no getSetCookie)', () => {
-      expect(
-        readSetCookies(resp({ get: (n: string) => (n === 'set-cookie' ? 'a=1; Path=/, b=2' : null) })),
-      ).toEqual(['a=1; Path=/', 'b=2']);
-    });
-
-    it('returns [] when the joined header is absent', () => {
-      expect(readSetCookies(resp({ get: () => null }))).toEqual([]);
-    });
-
-    it('returns [] when neither getSetCookie nor get is available', () => {
-      expect(readSetCookies(resp({}))).toEqual([]);
-    });
-  });
-
   describe('freshCsrfFromResponse', () => {
     const withCookies = (...cookies: string[]): Response =>
       resp({ getSetCookie: () => cookies });
 
     it('returns the rotated csrftoken value', () => {
       expect(freshCsrfFromResponse(withCookies('x=1; Path=/', 'csrftoken=NEW; Secure'))).toBe('NEW');
+    });
+
+    it('falls back to splitting the joined set-cookie header (no getSetCookie)', () => {
+      expect(
+        freshCsrfFromResponse(
+          resp({ get: (n: string) => (n === 'set-cookie' ? 'a=1; Path=/, csrftoken=NEW' : null) }),
+        ),
+      ).toBe('NEW');
+    });
+
+    it('returns undefined when the joined header is absent', () => {
+      expect(freshCsrfFromResponse(resp({ get: () => null }))).toBeUndefined();
     });
 
     it('skips non-csrftoken cookies', () => {

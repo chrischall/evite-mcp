@@ -188,11 +188,4 @@ describe('loginWithPassword — error & parser branches', () => {
     });
     await expect(loginWithPassword('u@e.com', 'pw', fetchImpl)).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
-  it('treats a headers object with no cookie accessors as no cookies', async () => {
-    const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
-      if (init?.method === 'POST') return { ok: true, status: 200, headers: {}, json: async () => ({}) } as unknown as Response;
-      return fakeResponse({ ok: true, status: 200, setCookies: ['csrftoken=prime-csrf; Path=/'] });
-    });
-    await expect(loginWithPassword('u@e.com', 'pw', fetchImpl)).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
-  });
 });

@@ -23,11 +23,11 @@
 // a signed-in browser that already held the `csrftoken` cookie and sent the
 // header automatically, which hid the requirement.)
 //
-// Set-Cookie reading: Node's fetch exposes `headers.getSetCookie()` (an array,
-// one entry per cookie). If a runtime lacks it we fall back to the single joined
-// `set-cookie` header and split it. The password is NEVER echoed in errors.
+// Set-Cookie reading is delegated to the shared mcp-utils `CookieJar`
+// (`getSetCookie()` preferred, joined-header split fallback, deletion markers
+// dropped). The password is NEVER echoed in errors.
 
-import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
+import { CookieJar, SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
 
 /** Evite origin + endpoints. */
 const ORIGIN = 'https://www.evite.com';
@@ -72,45 +72,16 @@ function badCredentials(): never {
 }
 
 /**
- * Read every `Set-Cookie` from a response as raw `name=value; attrs` strings,
- * preferring `getSetCookie()` and falling back to a split of the joined header.
+ * Project a jar onto the {@link KEPT_COOKIES} keep-list as a `Cookie:` header
+ * value, in keep-list declaration order (absent names are skipped). This is the
+ * evite-specific slice over the shared jar: the login response sets extras
+ * (e.g. `cf_clearance`) that must NOT leak into the session header.
  */
-function readSetCookies(response: Response): string[] {
-  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
-  if (typeof headers.getSetCookie === 'function') {
-    return headers.getSetCookie();
-  }
-  const joined = typeof headers.get === 'function' ? headers.get('set-cookie') : null;
-  if (!joined) return [];
-  return joined.split(/,\s*(?=[^;,\s]+=)/);
-}
-
-/**
- * Parse `name=value; attrs` Set-Cookie strings into a `name → value` map. Only
- * the leading `name=value` pair is read; cookie attributes are ignored. When
- * `only` is given, restrict to those names; otherwise keep all (used to echo the
- * whole priming jar back, which the CSRF check requires).
- */
-function parseCookies(setCookies: string[], only?: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const raw of setCookies) {
-    /* v8 ignore next -- split(';',1) always yields a defined element; `?.`/`?? ''` only satisfy noUncheckedIndexedAccess */
-    const firstPair = raw.split(';', 1)[0]?.trim() ?? '';
-    const eq = firstPair.indexOf('=');
-    if (eq <= 0) continue;
-    const name = firstPair.slice(0, eq).trim();
-    const value = firstPair.slice(eq + 1).trim();
-    if (!value) continue;
-    if (only && !only.includes(name)) continue;
-    out[name] = value;
-  }
-  return out;
-}
-
-/** Build a `Cookie:` header value from a name→value map. */
-function cookieHeader(cookies: Record<string, string>, order?: string[]): string {
-  const names = order ? order.filter((n) => cookies[n]) : Object.keys(cookies);
-  return names.map((n) => `${n}=${cookies[n]}`).join('; ');
+function keptCookieHeader(jar: CookieJar, keep: readonly string[]): string {
+  return keep
+    .filter((name) => jar.get(name))
+    .map((name) => `${name}=${jar.get(name)}`)
+    .join('; ');
 }
 
 /**
@@ -128,17 +99,18 @@ export async function loginWithPassword(
   fetchImpl: FetchImpl = fetch,
 ): Promise<PasswordLoginResult> {
   // ── 1. Prime: GET the homepage to obtain the csrftoken (+ anonymous) cookies.
-  let primed: Record<string, string>;
+  // The WHOLE priming jar is echoed back on the POST (the CSRF check requires it).
+  const primed = new CookieJar();
   try {
     const prime = await fetchImpl(HOME_URL, {
       method: 'GET',
       headers: { 'User-Agent': USER_AGENT },
     });
-    primed = parseCookies(readSetCookies(prime));
+    primed.absorb(prime.headers);
   } catch {
     badCredentials();
   }
-  const csrf = primed[CSRF_COOKIE];
+  const csrf = primed.get(CSRF_COOKIE);
   if (!csrf) badCredentials(); // can't satisfy the CSRF check without it
 
   // ── 2. Login: POST creds with the full jar, the CSRF header, and Origin.
@@ -149,7 +121,7 @@ export async function loginWithPassword(
       headers: {
         'Content-Type': 'application/json',
         'X-CSRFToken': csrf,
-        Cookie: cookieHeader(primed),
+        Cookie: primed.header(),
         Origin: ORIGIN,
         Referer: HOME_URL,
         'User-Agent': USER_AGENT,
@@ -165,12 +137,13 @@ export async function loginWithPassword(
   // ── 3. Build the authenticated session from the LOGIN response's Set-Cookie
   // (Evite re-sets the full authenticated jar on success — session pair, rotated
   // csrftoken, features). The prime jar existed only to pass the CSRF check.
-  const loginCookies = parseCookies(readSetCookies(response), KEPT_COOKIES);
-  const hasSession = SESSION_COOKIES.some((name) => Boolean(loginCookies[name]));
+  const loginJar = new CookieJar();
+  loginJar.absorb(response.headers);
+  const hasSession = SESSION_COOKIES.some((name) => Boolean(loginJar.get(name)));
   if (!hasSession) badCredentials();
 
-  const result: PasswordLoginResult = { cookieHeader: cookieHeader(loginCookies, KEPT_COOKIES) };
-  const csrfToken = loginCookies[CSRF_COOKIE];
+  const result: PasswordLoginResult = { cookieHeader: keptCookieHeader(loginJar, KEPT_COOKIES) };
+  const csrfToken = loginJar.get(CSRF_COOKIE);
   if (csrfToken) result.csrfToken = csrfToken;
   return result;
 }

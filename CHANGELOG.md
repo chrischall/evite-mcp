@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.5](https://github.com/chrischall/evite-mcp/compare/v0.3.4...v0.3.5) (2026-07-07)
+
+
+### Bug Fixes
+
+* bump @chrischall/mcp-utils to 0.12.0 ([#56](https://github.com/chrischall/evite-mcp/issues/56)) ([3d9833b](https://github.com/chrischall/evite-mcp/commit/3d9833b8679b131d10011e8b44089e9da2081c13))
+
+
+### Refactor
+
+* dedupe Set-Cookie parsing onto mcp-utils CookieJar ([#53](https://github.com/chrischall/evite-mcp/issues/53)) ([7638cea](https://github.com/chrischall/evite-mcp/commit/7638ceaaa6de8ba9b74c97a61693e7b7d2ba36ab))
+
+
+### Documentation
+
+* document first-party dependency-bump label exception ([#57](https://github.com/chrischall/evite-mcp/issues/57)) ([7683eec](https://github.com/chrischall/evite-mcp/commit/7683eece7ac97b98d22862291b9abd4b80788da7))
+
 ## [0.3.4](https://github.com/chrischall/evite-mcp/compare/v0.3.3...v0.3.4) (2026-06-29)
 
 

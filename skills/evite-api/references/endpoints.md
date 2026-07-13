@@ -258,11 +258,14 @@ values) — this is a set, not a merge.
 
 ```sh
 CSRF=$(awk -F'\t' '$6=="csrftoken"{v=$7} END{print v}' "$JAR")
-curl -sS -b "$JAR" -c "$JAR" -X DELETE -H "X-CSRFToken: $CSRF" \
+curl -sS -b "$JAR" -c "$JAR" -X DELETE \
+  -H 'Content-Type: application/json' -H "X-CSRFToken: $CSRF" \
   "https://www.evite.com/ajax/event/$EVENT_ID/guestlist/draft/$GUEST_ID"
 ```
 
-No body.
+No body, but `src/client.ts`'s `write()` always sends `Content-Type:
+application/json` on every write regardless of body presence — include it
+here too.
 
 ### 15. Send the invitation ("Send now", assumed body) — `POST /services/event/v1/{id}/send/`
 

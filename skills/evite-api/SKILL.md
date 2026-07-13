@@ -32,6 +32,7 @@ before each write, never cache it.
 ```sh
 export EVITE_EMAIL=you@example.com EVITE_PASSWORD=yourpassword   # or: op read op://.../evite/password
 JAR=/tmp/evite-jar.txt
+touch "$JAR" && chmod 600 "$JAR"   # jar holds the live session cookie — restrict before writing
 UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
 
 # 1. Prime: GET the homepage to obtain the csrftoken (+ anonymous session) cookies.

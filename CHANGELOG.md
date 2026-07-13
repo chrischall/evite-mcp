@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/chrischall/evite-mcp/compare/v0.3.5...v0.4.0) (2026-07-13)
+
+
+### Features
+
+* **skill:** add evite api access skill ([#61](https://github.com/chrischall/evite-mcp/issues/61)) ([5bc79c0](https://github.com/chrischall/evite-mcp/commit/5bc79c0c0bbf31c5507ec9c5f11df4e51be1311a))
+
+
+### Documentation
+
+* **evite-api:** add missing Content-Type header + chmod-restrict session jar ([#64](https://github.com/chrischall/evite-mcp/issues/64)) ([50c336e](https://github.com/chrischall/evite-mcp/commit/50c336e4df09abb26038ddc9faf50d394c1834c2)), closes [#62](https://github.com/chrischall/evite-mcp/issues/62)
+
 ## [0.3.5](https://github.com/chrischall/evite-mcp/compare/v0.3.4...v0.3.5) (2026-07-07)
 
 

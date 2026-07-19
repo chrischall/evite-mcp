@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/chrischall/evite-mcp/compare/v0.4.0...v0.4.1) (2026-07-19)
+
+
+### Documentation
+
+* replace duplicated fleet policy with a pointer ([#65](https://github.com/chrischall/evite-mcp/issues/65)) ([20c9f71](https://github.com/chrischall/evite-mcp/commit/20c9f71f7d3e59e8930e825506562c7919091f57))
+
 ## [0.4.0](https://github.com/chrischall/evite-mcp/compare/v0.3.5...v0.4.0) (2026-07-13)
 
 

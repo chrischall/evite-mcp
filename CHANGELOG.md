@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/chrischall/evite-mcp/compare/v0.4.2...v0.5.0) (2026-07-30)
+
+
+### Features
+
+* **messages:** implement per-guest messaging over Firebase RTDB REST ([#77](https://github.com/chrischall/evite-mcp/issues/77)) ([e3b3d36](https://github.com/chrischall/evite-mcp/commit/e3b3d36f8e52d3abb45ad40b7d2facdbc34f2794))
+
 ## [0.4.2](https://github.com/chrischall/evite-mcp/compare/v0.4.1...v0.4.2) (2026-07-30)
 
 

@@ -2,7 +2,7 @@
   "name": "evite-mcp",
   "version": "0.4.1",
   "mcpName": "io.github.chrischall/evite-mcp",
-  "description": "Evite MCP server for Claude — list events, guest lists & RSVPs, RSVP, message guests, and create/edit events.",
+  "description": "Evite MCP server for Claude \u2014 list events, guest lists & RSVPs, RSVP, message guests, and create/edit events.",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",
@@ -38,9 +38,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@chrischall/mcp-utils": "^0.13.0",
-    "@fetchproxy/bootstrap": "^1.0.0",
-    "@fetchproxy/server": "^1.0.0",
+    "@chrischall/mcp-utils": "^0.14.0",
+    "@fetchproxy/bootstrap": "^1.7.0",
+    "@fetchproxy/server": "^1.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.0"
   },

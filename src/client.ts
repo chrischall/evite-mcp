@@ -126,10 +126,44 @@ export interface ListEventsResult {
   totals: Record<string, number>;
 }
 
+/**
+ * The guest fields {@link EviteClient.sendMessage} relies on. Kept narrow (and
+ * every field optional) because the endpoint returns far more than this and the
+ * rest is passed through to callers untyped.
+ */
+export interface GuestRecord {
+  guestId?: string;
+  /** Identity that names the guest's chat thread — NOT the same as `guestId`. */
+  userId?: string;
+  name?: string;
+  guestType?: string;
+  [key: string]: unknown;
+}
+
 /** Shape of the guests endpoint response: `{ guests, summary }`. */
 export interface ListGuestsResult {
-  guests: unknown[];
+  guests: GuestRecord[];
   summary: Record<string, unknown>;
+}
+
+/** The Firebase app config Evite hands the page in its chat grant. */
+export interface FireConfig {
+  apiKey: string;
+  databaseURL: string;
+  projectId?: string;
+  authDomain?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * The "tsunami-auth" chat grant — see {@link EviteClient.sendMessage}. `refs`
+ * carries the per-event RTDB paths; `messages` is the one h2g threads hang off.
+ */
+export interface TsunamiAuth {
+  token: string;
+  fire_config: FireConfig;
+  readOnly: boolean;
+  refs: { messages: string; [key: string]: string };
 }
 
 /** Shape of the posts endpoint response: `{ posts }`. */
@@ -542,47 +576,146 @@ export class EviteClient {
   }
 
   /**
+   * Fetch the "tsunami-auth" grant for one guest record —
+   * **`GET /tsunami/v1/services/authorization/event/{eventId}/guest/{guestId}/`**.
+   *
+   * VERIFIED live 2026-07-30 (200): returns `{ token, fire_config, readOnly, refs }`
+   * where `token` is a **Firebase custom token**, `fire_config` the RTDB app config
+   * (`apiKey`, `databaseURL`, …) and `refs` the per-event RTDB paths (`messages`,
+   * `groups`, `guests`, `h2g`, …). This is how the web app bootstraps its chat:
+   * `signInWithCustomToken(token)` against `fire_config`, then read/write under `refs`.
+   *
+   * NOTE: this takes the **guestId**, not the userId — a userId yields
+   * `400 {"message":"cannot find event …"}`.
+   */
+  private async tsunamiAuth(eventId: string, guestId: string): Promise<TsunamiAuth> {
+    return this.get<TsunamiAuth>(
+      `/tsunami/v1/services/authorization/event/${encodeURIComponent(eventId)}/guest/${encodeURIComponent(guestId)}/`,
+    );
+  }
+
+  /**
+   * Exchange a Firebase **custom** token for an **ID** token via Google's Identity
+   * Toolkit — `POST /v1/accounts:signInWithCustomToken?key={apiKey}`.
+   *
+   * VERIFIED live 2026-07-30 (200 → `{ idToken, refreshToken, expiresIn }`).
+   * Deliberately a bare `fetch`: this is not an evite.com call, so it must not
+   * carry the Evite session cookies or CSRF header.
+   */
+  private async firebaseIdToken(config: FireConfig, customToken: string): Promise<string> {
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(config.apiKey)}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+    });
+    // Read the body once and parse defensively: Identity Toolkit answers JSON on
+    // both success and error, but a proxy/edge failure can return HTML.
+    const raw = await response.text();
+    let parsed: { idToken?: string; error?: { message?: string } } = {};
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      parsed = {};
+    }
+    if (!response.ok || !parsed.idToken) {
+      throw new McpToolError(
+        `Firebase sign-in failed (${response.status}): ${parsed.error?.message ?? 'no idToken returned'}`,
+        { hint: "Evite's chat grant may have expired — retry, or re-open the event in your browser." },
+      );
+    }
+    return parsed.idToken;
+  }
+
+  /**
    * Send a private host→guest ("h2g") message.
    *
-   * NOT AN HTTP ENDPOINT. Source-verified 2026-07-30 by reading Evite's own
-   * message-form bundle (`chunk.1558`, the component rendering
-   * `data-qa-id="message-form"`): the per-guest send is a **Firebase Realtime
-   * Database push**, not a REST call —
+   * This is **not** a plain REST endpoint on evite.com. Source-verified 2026-07-30
+   * from Evite's own message-form bundle (`chunk.1558`), the per-guest send is a
+   * **Firebase Realtime Database push**:
    *
    * ```js
    * O = { createdBy: userId, createdAt: rtdb.TIMESTAMP, message: n };
-   * await s.current.push(O);        // s = rtdb.get(<serverPaths.messages>/h2g/<groupId>)
+   * await doc.push(O);          // doc = rtdb.get(`${refs.messages}/h2g/${groupId}`)
    * ```
    *
-   * Only the *broadcast* sibling is HTTP (`POST /tsunami/v1/services/event/
-   * {id}/broadcast/`, see {@link broadcast}); under `/tsunami/…/guest/{id}/`
-   * the only REST path the app uses is `…/messages/status`, and it is a **GET**.
-   * The previous `POST …/guest/{id}/messages` here was an assumed endpoint that
-   * Evite never actually serves (issue #3) — it could not have delivered a
-   * message, which is why no HTTP traffic is observable when the UI sends one.
+   * An earlier version POSTed an assumed `/tsunami/…/guest/{id}/messages` endpoint
+   * that Evite never serves — it could not have delivered anything (issue #3). We
+   * reproduce the real write over RTDB's REST API instead, where `POST <path>.json`
+   * **is** a `push()` (the server mints the push id) and `{".sv":"timestamp"}` is
+   * the wire form of `ServerValue.TIMESTAMP`:
    *
-   * Implementing this for real needs a Firebase RTDB client authenticated as the
-   * host (auth token + `serverPaths.messages`, both handed to the page at
-   * runtime), which is out of scope for the REST client. Until then, fail loudly
-   * rather than silently POSTing into the void: {@link broadcast} is the
-   * supported host→guest messaging path.
+   *   1. {@link tsunamiAuth} as the **host's** guest record → custom token + config + refs.
+   *   2. {@link firebaseIdToken} → an ID token for that identity.
+   *   3. `POST {databaseURL}{refs.messages}/h2g/{recipientUserId}.json?auth={idToken}`.
+   *
+   * The thread is keyed by the recipient's **userId** (not guestId) and the write is
+   * signed as the **host**, hence the guest-list lookup resolving both. Verified
+   * live: steps 1–2 (200) and a REST read of the thread (200, returning messages the
+   * web UI had sent). NOTE: this really notifies the guest — keep it confirm-gated.
    */
   async sendMessage(
-    _eventId: string,
-    _guestId: string,
-    _input: SendMessageInput,
-  ): Promise<never> {
-    throw new McpToolError(
-      'Per-guest messaging is not available over the Evite REST API.',
-      {
-        hint:
-          "Evite's host→guest ('h2g') messages are written straight to Firebase " +
-          'Realtime Database by the web app, not through an HTTP endpoint. Use ' +
-          'evite_broadcast to message guests (it targets RSVP segments such as ' +
-          "['yes','maybe'] and is a real REST call), or send the message from " +
-          'evite.com directly.',
-      },
-    );
+    eventId: string,
+    guestId: string,
+    input: SendMessageInput,
+  ): Promise<{ pushId: string }> {
+    // One guest-list read resolves both identities: the host (who signs the
+    // write) and the recipient (whose userId names the thread).
+    const { guests } = await this.listGuests(eventId);
+    const host = guests.find((g) => g.guestType === 'host');
+    const recipient = guests.find((g) => g.guestId === guestId);
+    if (!host?.guestId || !host.userId) {
+      throw new McpToolError('Could not find the host guest record for this event.', {
+        hint: 'Per-guest messages are sent as the event host; only a host can use this tool.',
+      });
+    }
+    if (!recipient?.userId) {
+      throw new McpToolError(`Guest ${guestId} was not found on event ${eventId}.`, {
+        hint: 'Use evite_list_guests to get a valid guest_id.',
+      });
+    }
+
+    const auth = await this.tsunamiAuth(eventId, host.guestId);
+    if (auth.readOnly) {
+      throw new McpToolError('Evite returned a read-only chat grant for this event.', {
+        hint: 'Messaging may be closed on a canceled or archived event.',
+      });
+    }
+
+    const idToken = await this.firebaseIdToken(auth.fire_config, auth.token);
+    const base = auth.fire_config.databaseURL.replace(/\/+$/, '');
+    // `refs.messages` is a server-supplied PATH (`/chat-q/events/{id}/messages`),
+    // so it is interpolated as-is — encoding it would escape its own separators.
+    // Only the dynamic segment we append gets escaped, matching every other
+    // dynamic path segment in this file.
+    const path = `${auth.refs.messages}/h2g/${encodeURIComponent(recipient.userId)}`;
+    const response = await fetch(`${base}${path}.json?auth=${encodeURIComponent(idToken)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        createdBy: host.userId,
+        createdAt: { '.sv': 'timestamp' },
+        message: input.message,
+      }),
+    });
+    // Single body read: RTDB returns `{"name":"<pushId>"}` on success and a JSON
+    // (or occasionally plain-text) error otherwise.
+    const raw = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        formatApiError(response.status, 'POST', `${path}.json`, raw, { service: 'Evite chat' }),
+      );
+    }
+    let parsed: { name?: string } = {};
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      parsed = {};
+    }
+    if (!parsed.name) {
+      throw new Error('Evite chat push succeeded but returned no push id.');
+    }
+    return { pushId: parsed.name };
   }
 
   /**

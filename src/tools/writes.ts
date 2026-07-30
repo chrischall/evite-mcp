@@ -15,9 +15,9 @@ import type { EviteClient } from '../client.js';
 // so confirm-gating keeps a human in the loop. The endpoints are live-verified
 // (see docs/EVITE-API.md), and the two formerly-assumed request bodies were
 // pinned from Evite's own bundles on 2026-07-30 (issue #3): `send` posts no
-// body, and per-guest messaging turned out to be a Firebase RTDB write with no
-// REST endpoint at all — `evite_send_message` now errors and points at
-// `evite_broadcast`.
+// body, and per-guest messaging turned out to be a Firebase RTDB push rather
+// than an evite.com endpoint — `evite_send_message` now performs that push over
+// RTDB's REST API (see EviteClient.sendMessage).
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -182,9 +182,10 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_send_message',
     {
       description:
-        'NOT SUPPORTED — Evite has no REST endpoint for per-guest messages; its web app writes ' +
-        'them straight to Firebase Realtime Database, so this always errors. Use evite_broadcast ' +
-        'to message guests by RSVP segment instead.',
+        'Send a private message to one Evite event guest. This really notifies the guest. ' +
+        'Sent as the event host (Evite delivers per-guest chat over Firebase, not REST), so ' +
+        'only a host can use it. Confirm-gated: without confirm:true this returns a dry-run ' +
+        'preview and sends nothing.',
       annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false }),
       inputSchema: sendMessageArgs.shape,
     },
@@ -194,8 +195,8 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         return preview(
           'send_message',
           { event_id: args.event_id, guest_id: args.guest_id, message: args.message },
-          'NOT SUPPORTED: per-guest messaging is a Firebase RTDB write, not an HTTP endpoint — ' +
-            'confirming will error. Use evite_broadcast instead.',
+          'Delivered as a Firebase RTDB push (Evite has no REST endpoint for per-guest chat); ' +
+            'sent as the event host.',
         );
       }
       const data = await client.sendMessage(args.event_id, args.guest_id, { message: args.message });

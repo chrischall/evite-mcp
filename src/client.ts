@@ -5,6 +5,7 @@ import {
   CookieJar,
   fileBlob,
   formatApiError,
+  McpToolError,
   parseCookieHeader,
   readFileHead,
   SessionNotAuthenticatedError,
@@ -541,23 +542,46 @@ export class EviteClient {
   }
 
   /**
-   * Send a private host→guest message —
-   * **`POST /tsunami/v1/services/event/{eventId}/guest/{guestId}/messages`**.
+   * Send a private host→guest ("h2g") message.
    *
-   * VERIFIED endpoint (live probe 2026-06-01): the host "Send message" flow hits
-   * this `/tsunami/` messaging service per guest — NOT `/services/…/posts/` (which
-   * is GET-only, `405` on writes). Body assumed `{ message }` (the send fired this
-   * endpoint; the exact body field wasn't captured — issue #3).
+   * NOT AN HTTP ENDPOINT. Source-verified 2026-07-30 by reading Evite's own
+   * message-form bundle (`chunk.1558`, the component rendering
+   * `data-qa-id="message-form"`): the per-guest send is a **Firebase Realtime
+   * Database push**, not a REST call —
+   *
+   * ```js
+   * O = { createdBy: userId, createdAt: rtdb.TIMESTAMP, message: n };
+   * await s.current.push(O);        // s = rtdb.get(<serverPaths.messages>/h2g/<groupId>)
+   * ```
+   *
+   * Only the *broadcast* sibling is HTTP (`POST /tsunami/v1/services/event/
+   * {id}/broadcast/`, see {@link broadcast}); under `/tsunami/…/guest/{id}/`
+   * the only REST path the app uses is `…/messages/status`, and it is a **GET**.
+   * The previous `POST …/guest/{id}/messages` here was an assumed endpoint that
+   * Evite never actually serves (issue #3) — it could not have delivered a
+   * message, which is why no HTTP traffic is observable when the UI sends one.
+   *
+   * Implementing this for real needs a Firebase RTDB client authenticated as the
+   * host (auth token + `serverPaths.messages`, both handed to the page at
+   * runtime), which is out of scope for the REST client. Until then, fail loudly
+   * rather than silently POSTing into the void: {@link broadcast} is the
+   * supported host→guest messaging path.
    */
   async sendMessage(
-    eventId: string,
-    guestId: string,
-    input: SendMessageInput,
-  ): Promise<unknown> {
-    return this.write(
-      'POST',
-      `/tsunami/v1/services/event/${encodeURIComponent(eventId)}/guest/${encodeURIComponent(guestId)}/messages`,
-      { message: input.message },
+    _eventId: string,
+    _guestId: string,
+    _input: SendMessageInput,
+  ): Promise<never> {
+    throw new McpToolError(
+      'Per-guest messaging is not available over the Evite REST API.',
+      {
+        hint:
+          "Evite's host→guest ('h2g') messages are written straight to Firebase " +
+          'Realtime Database by the web app, not through an HTTP endpoint. Use ' +
+          'evite_broadcast to message guests (it targets RSVP segments such as ' +
+          "['yes','maybe'] and is a real REST call), or send the message from " +
+          'evite.com directly.',
+      },
     );
   }
 
@@ -751,13 +775,21 @@ export class EviteClient {
    * Send the invitation ("Send now") to the event's ready-to-send (draft) guests —
    * **`POST /services/event/v1/{id}/send/`**.
    *
-   * VERIFIED endpoint (live probe 2026-06-01): "Send now" fired exactly this path
-   * before delivering to the draft guests. Body assumed empty (it sends whatever
-   * is in the draft guest list); the exact body wasn't captured — issue #3.
+   * VERIFIED endpoint + body (source-read 2026-07-30, closing issue #3): the
+   * editor bundle's RTK-Query slice defines the send mutation as
+   *
+   * ```js
+   * send: e.mutation({ query: e => ({ url: `/services/event/v1/${e}/send/`, method: 'POST' }) })
+   * ```
+   *
+   * with **no `body` key** — RTK Query therefore issues the POST with no request
+   * body at all, the event id travelling only in the path. So this sends
+   * `undefined` (no body) rather than the `{}` it used to, matching the site.
+   * It sends whatever is in the draft guest list.
    * NOTE: this actually emails guests — keep it strictly confirm-gated.
    */
   async sendInvitation(eventId: string): Promise<unknown> {
-    return this.write('POST', `/services/event/v1/${encodeURIComponent(eventId)}/send/`, {});
+    return this.write('POST', `/services/event/v1/${encodeURIComponent(eventId)}/send/`);
   }
 
   /**

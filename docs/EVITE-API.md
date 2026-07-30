@@ -159,14 +159,25 @@ blackholed `@example.com` address, using a `PerformanceObserver`→`localStorage
 (it sees the SPA's requests the fetch-closure hides AND survives the navigation
 that cleared `read_network_requests`):
 - **Send invitation** ("Send now") — **`POST /services/event/v1/{id}/send/`** (sends
-  the ready-to-send draft guests). Body assumed empty; only the endpoint captured.
-- **Send message** (host→guest) — **`POST /tsunami/v1/services/event/{id}/guest/{gid}/messages`**
-  — a THIRD base, the `/tsunami/` messaging service (NOT `/posts/`, which is GET-only).
-  Per-guest private message; body assumed `{message}` (only endpoint captured).
+  the ready-to-send draft guests). **Body: none** — source-verified 2026-07-30 from
+  the editor bundle's RTK-Query slice, which defines the mutation as
+  `query: e => ({ url: `/services/event/v1/${e}/send/`, method: 'POST' })` with no
+  `body` key, so RTK issues the POST with no body at all.
+- **Send message** (host→guest, "h2g") — **NOT an HTTP endpoint.** Source-verified
+  2026-07-30 from `chunk.1558` (the `data-qa-id="message-form"` component): the
+  per-guest send is a **Firebase Realtime Database push** —
+  `doc.push({ createdBy: userId, createdAt: rtdb.TIMESTAMP, message })` against
+  `<serverPaths.messages>/h2g/<groupId>`. The previously-assumed
+  `POST /tsunami/…/guest/{gid}/messages` is not a route Evite serves; under that
+  guest path the app only uses `…/messages/status`, and it is a **GET**. This is
+  why no HTTP traffic appears when the UI sends a per-guest message.
+  Only the *broadcast* sibling is REST (see below). `evite_send_message` therefore
+  errors and points at `evite_broadcast`.
 
-> ALL 9 writes are now endpoint-verified. Remaining nicety (issue #3): the exact
-> request *bodies* for `send`/`sendMessage` (the URL-only observer can't see them)
-> and `createEvent`'s `templateName` value (it creates a draft but 500s on success).
+> Issue #3 RESOLVED (2026-07-30): both formerly-assumed bodies are now pinned from
+> Evite's own bundles — `send` posts no body, and per-guest messaging has no REST
+> endpoint at all. Still open as a separate nicety: `createEvent`'s `templateName`
+> handling (it creates a draft but 500s on success, leaving an unopenable event).
 
 ### Guest edit / remove + duplicate + settings (DevTools HAR, 2026-06-01)
 Captured from a DevTools HAR (Preserve-log on) of real actions on a throwaway:

@@ -94,21 +94,19 @@ describe('EviteClient — rsvp', () => {
   });
 });
 
-describe('EviteClient — sendMessage (VERIFIED endpoint)', () => {
-  it('POSTs the /tsunami/ per-guest messages endpoint with the message', async () => {
+describe('EviteClient — sendMessage (no REST endpoint exists)', () => {
+  // Source-verified 2026-07-30 (issue #3): Evite's per-guest "h2g" send is a
+  // Firebase RTDB push (`doc.push({createdBy, createdAt, message})`), not HTTP.
+  // The old `POST /tsunami/…/guest/{id}/messages` was an assumed endpoint Evite
+  // never serves, so it must fail loudly instead of POSTing into the void.
+  it('throws without issuing any request, and points at broadcast', async () => {
     const spy = mockFetch({ body: { ok: true } });
     const client = newClient();
-    await client.sendMessage('EVENTID0', 'GUEST9', { message: 'hello all' });
 
-    const url = spy.mock.calls[0]![0] as string;
-    const init = spy.mock.calls[0]![1] as RequestInit;
-    // Verified live: host "Send message" hits the /tsunami/ messaging service per guest.
-    expect(url).toBe(
-      'https://www.evite.com/tsunami/v1/services/event/EVENTID0/guest/GUEST9/messages',
+    await expect(client.sendMessage('EVENTID0', 'GUEST9', { message: 'hello all' })).rejects.toThrow(
+      /not available over the Evite REST API/i,
     );
-    expect(init.method).toBe('POST');
-    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
-    expect(bodyOf(spy).message).toBe('hello all');
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 
@@ -478,7 +476,7 @@ describe('EviteClient — CSRF presence', () => {
     const spy = mockFetch({ body: {} }, { body: {} }, { body: {} }, { body: {} });
     const client = newClient();
     await client.rsvp('E', 'G', { response: 'maybe', numberOfAdults: 1, numberOfKids: 0 });
-    await client.sendMessage('E', 'G', { message: 'x' });
+    await client.broadcast('E', { message: 'x', groups: ['yes'] });
     await client.createEvent({ title: 't', startDatetime: 's', templateName: 'tpl' });
     await client.updateEvent('E', { title: 't' });
     for (let n = 0; n < 4; n++) {
@@ -489,7 +487,7 @@ describe('EviteClient — CSRF presence', () => {
   it('still sends the write when no CSRF token resolved (header simply absent)', async () => {
     const spy = mockFetch({ body: {} });
     const client = newClient({ cookieHeader: 'x-evite-session=s; evtsession=e' });
-    await client.sendMessage('E', 'G', { message: 'x' });
+    await client.broadcast('E', { message: 'x', groups: ['yes'] });
     const headers = headersOf(spy);
     expect(headers[CSRF_HEADER]).toBeUndefined();
     expect(headers.cookie).toBe('x-evite-session=s; evtsession=e');
@@ -603,11 +601,16 @@ describe('EviteClient — uploadPhoto error/edge branches', () => {
 });
 
 describe('EviteClient — sendInvitation (confirm-gated)', () => {
-  it('POSTs the event send endpoint', async () => {
+  it('POSTs the event send endpoint with NO request body', async () => {
     const spy = mockFetch({ body: { ok: true } });
     await newClient().sendInvitation('EVENTID0');
     expect(spy.mock.calls[0]![0]).toBe('https://www.evite.com/services/event/v1/EVENTID0/send/');
-    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe('POST');
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe('POST');
+    // Source-verified (issue #3): the editor's RTK-Query mutation is
+    // `{ url: `/services/event/v1/${id}/send/`, method: 'POST' }` with no `body`
+    // key, so the real site sends no body — not the `{}` this used to send.
+    expect(init.body).toBeUndefined();
   });
 });
 

@@ -163,21 +163,37 @@ that cleared `read_network_requests`):
   the editor bundle's RTK-Query slice, which defines the mutation as
   `query: e => ({ url: `/services/event/v1/${e}/send/`, method: 'POST' })` with no
   `body` key, so RTK issues the POST with no body at all.
-- **Send message** (host→guest, "h2g") — **NOT an HTTP endpoint.** Source-verified
-  2026-07-30 from `chunk.1558` (the `data-qa-id="message-form"` component): the
-  per-guest send is a **Firebase Realtime Database push** —
+- **Send message** (host→guest, "h2g") — **not an evite.com endpoint; a Firebase
+  RTDB push.** Source-verified 2026-07-30 from `chunk.1558` (the
+  `data-qa-id="message-form"` component):
   `doc.push({ createdBy: userId, createdAt: rtdb.TIMESTAMP, message })` against
-  `<serverPaths.messages>/h2g/<groupId>`. The previously-assumed
-  `POST /tsunami/…/guest/{gid}/messages` is not a route Evite serves; under that
-  guest path the app only uses `…/messages/status`, and it is a **GET**. This is
-  why no HTTP traffic appears when the UI sends a per-guest message.
-  Only the *broadcast* sibling is REST (see below). `evite_send_message` therefore
-  errors and points at `evite_broadcast`.
+  `<refs.messages>/h2g/<groupId>`. The previously-assumed
+  `POST /tsunami/…/guest/{gid}/messages` is not a route Evite serves (under that
+  guest path the app only uses `…/messages/status`, a **GET**) — which is why no
+  HTTP traffic appears when the UI sends a per-guest message.
+
+  We reproduce the write over **RTDB's REST API**, where `POST <path>.json` *is* a
+  `push()` and `{".sv":"timestamp"}` is the wire form of `ServerValue.TIMESTAMP`:
+
+  1. `GET /tsunami/v1/services/authorization/event/{eventId}/guest/{guestId}/`
+     (cookies + CSRF) → `{ token, fire_config, readOnly, refs }`. **Live-verified
+     200.** Takes the *guestId*; a userId returns `400 cannot find event`.
+     `refs` = `{ messages, groups, guests, h2g, widget, virtual_event_channels }`,
+     e.g. `messages: /chat-q/events/{eventId}/messages`.
+  2. `POST https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={fire_config.apiKey}`
+     with `{token, returnSecureToken:true}` → `{ idToken, … }`. **Live-verified 200.**
+     No Evite cookies (not an evite.com call).
+  3. `POST {fire_config.databaseURL}{refs.messages}/h2g/{recipientUserId}.json?auth={idToken}`
+     with `{createdBy: <hostUserId>, createdAt: {".sv":"timestamp"}, message}`.
+     The thread is keyed by the recipient's **userId**; the write is signed as the
+     **host**. A REST **read** of that path is live-verified 200 (it returned
+     messages the web UI had sent); the write itself is exercised by unit tests.
 
 > Issue #3 RESOLVED (2026-07-30): both formerly-assumed bodies are now pinned from
-> Evite's own bundles — `send` posts no body, and per-guest messaging has no REST
-> endpoint at all. Still open as a separate nicety: `createEvent`'s `templateName`
-> handling (it creates a draft but 500s on success, leaving an unopenable event).
+> Evite's own bundles — `send` posts no body, and per-guest messaging is a Firebase
+> RTDB push (now implemented over RTDB REST rather than a nonexistent endpoint).
+> Still open as a separate nicety: `createEvent`'s `templateName` handling (it
+> creates a draft but 500s on success, leaving an unopenable event).
 
 ### Guest edit / remove + duplicate + settings (DevTools HAR, 2026-06-01)
 Captured from a DevTools HAR (Preserve-log on) of real actions on a throwaway:

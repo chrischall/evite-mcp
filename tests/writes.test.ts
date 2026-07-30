@@ -161,14 +161,13 @@ describe('evite_send_message', () => {
     expect(text).toMatch(/preview/i);
     expect(text).toContain('EVENTID0');
     expect(text).toContain('hello all');
-    // Issue #3: per-guest messaging has no REST endpoint (Firebase RTDB write),
-    // so the preview must steer the caller to broadcast rather than imply a send.
-    expect(text).toMatch(/not supported/i);
-    expect(text).toMatch(/broadcast/i);
+    // Issue #3: delivery is a Firebase RTDB push, not a REST call — the preview
+    // says so, but it is a real send once confirmed.
+    expect(text).toMatch(/rtdb|firebase/i);
     await h.close();
   });
 
-  it('with confirm: delegates to client.sendMessage (which rejects — no REST endpoint)', async () => {
+  it('with confirm: calls client.sendMessage', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
     await h.callTool('evite_send_message', {

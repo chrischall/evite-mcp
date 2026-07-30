@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.2](https://github.com/chrischall/evite-mcp/compare/v0.4.1...v0.4.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **deps:** bump @fetchproxy/* to 1.7.0 and @chrischall/mcp-utils to 0.14.0 ([#73](https://github.com/chrischall/evite-mcp/issues/73)) ([dda9f00](https://github.com/chrischall/evite-mcp/commit/dda9f0026561481368fe31bc9d4766f88b2617a4))
+* **writes:** pin send body and reject unsupported per-guest messaging ([#76](https://github.com/chrischall/evite-mcp/issues/76)) ([4bf4bbe](https://github.com/chrischall/evite-mcp/commit/4bf4bbe0393eb79bfa8c37cf99dd9553fe4cd07c))
+
 ## [0.4.1](https://github.com/chrischall/evite-mcp/compare/v0.4.0...v0.4.1) (2026-07-19)
 
 

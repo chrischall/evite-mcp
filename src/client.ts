@@ -609,10 +609,15 @@ export class EviteClient {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: customToken, returnSecureToken: true }),
     });
-    const parsed = (await response.json().catch(() => ({}))) as {
-      idToken?: string;
-      error?: { message?: string };
-    };
+    // Read the body once and parse defensively: Identity Toolkit answers JSON on
+    // both success and error, but a proxy/edge failure can return HTML.
+    const raw = await response.text();
+    let parsed: { idToken?: string; error?: { message?: string } } = {};
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      parsed = {};
+    }
     if (!response.ok || !parsed.idToken) {
       throw new McpToolError(
         `Firebase sign-in failed (${response.status}): ${parsed.error?.message ?? 'no idToken returned'}`,
@@ -679,7 +684,11 @@ export class EviteClient {
 
     const idToken = await this.firebaseIdToken(auth.fire_config, auth.token);
     const base = auth.fire_config.databaseURL.replace(/\/+$/, '');
-    const path = `${auth.refs.messages}/h2g/${recipient.userId}`;
+    // `refs.messages` is a server-supplied PATH (`/chat-q/events/{id}/messages`),
+    // so it is interpolated as-is — encoding it would escape its own separators.
+    // Only the dynamic segment we append gets escaped, matching every other
+    // dynamic path segment in this file.
+    const path = `${auth.refs.messages}/h2g/${encodeURIComponent(recipient.userId)}`;
     const response = await fetch(`${base}${path}.json?auth=${encodeURIComponent(idToken)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -689,13 +698,20 @@ export class EviteClient {
         message: input.message,
       }),
     });
+    // Single body read: RTDB returns `{"name":"<pushId>"}` on success and a JSON
+    // (or occasionally plain-text) error otherwise.
+    const raw = await response.text();
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
       throw new Error(
-        formatApiError(response.status, 'POST', `${path}.json`, body, { service: 'Evite chat' }),
+        formatApiError(response.status, 'POST', `${path}.json`, raw, { service: 'Evite chat' }),
       );
     }
-    const parsed = (await response.json().catch(() => ({}))) as { name?: string };
+    let parsed: { name?: string } = {};
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      parsed = {};
+    }
     if (!parsed.name) {
       throw new Error('Evite chat push succeeded but returned no push id.');
     }

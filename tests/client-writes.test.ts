@@ -163,6 +163,92 @@ describe('EviteClient — sendMessage (Firebase RTDB push over REST)', () => {
     ).rejects.toThrow(/was not found on event/i);
     expect(spy).toHaveBeenCalledTimes(1); // stopped after the guest-list read
   });
+
+  it('errors when the event has no host guest record', async () => {
+    // Only a host can send h2g messages — if the guest list carries no host row
+    // (or one without a userId) we must stop before requesting a chat grant.
+    const spy = mockFetch({
+      body: { guests: [{ guestId: 'GUEST9', userId: 'GUESTUSER9', guestType: 'guest' }], summary: {} },
+    });
+    await expect(
+      newClient().sendMessage('EVENTID0', 'GUEST9', { message: 'x' }),
+    ).rejects.toThrow(/host guest record/i);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a failed Firebase custom-token exchange', async () => {
+    mockFetch(
+      { body: GUESTS },
+      { body: GRANT },
+      { status: 400, body: { error: { message: 'INVALID_CUSTOM_TOKEN' } } },
+    );
+    await expect(
+      newClient().sendMessage('EVENTID0', 'GUEST9', { message: 'x' }),
+    ).rejects.toThrow(/Firebase sign-in failed \(400\).*INVALID_CUSTOM_TOKEN/is);
+  });
+
+  it('handles a non-JSON token-exchange failure (e.g. an edge HTML error page)', async () => {
+    mockFetch(
+      { body: GUESTS },
+      { body: GRANT },
+      { status: 502, rawBody: '<html>Bad Gateway</html>' },
+    );
+    await expect(
+      newClient().sendMessage('EVENTID0', 'GUEST9', { message: 'x' }),
+    ).rejects.toThrow(/Firebase sign-in failed \(502\).*no idToken returned/is);
+  });
+
+  it('surfaces an RTDB push rejection (e.g. security rules)', async () => {
+    mockFetch(
+      { body: GUESTS },
+      { body: GRANT },
+      { body: { idToken: 'ID-TOKEN-XYZ' } },
+      { status: 401, rawBody: '{"error":"Permission denied"}' },
+    );
+    await expect(
+      newClient().sendMessage('EVENTID0', 'GUEST9', { message: 'x' }),
+    ).rejects.toThrow(/401/);
+  });
+
+  it('errors when the push returns no push id', async () => {
+    mockFetch(
+      { body: GUESTS },
+      { body: GRANT },
+      { body: { idToken: 'ID-TOKEN-XYZ' } },
+      { body: {} }, // 200 but no `name`
+    );
+    await expect(
+      newClient().sendMessage('EVENTID0', 'GUEST9', { message: 'x' }),
+    ).rejects.toThrow(/no push id/i);
+  });
+
+  it('errors when a 200 push body is not JSON at all', async () => {
+    mockFetch(
+      { body: GUESTS },
+      { body: GRANT },
+      { body: { idToken: 'ID-TOKEN-XYZ' } },
+      { rawBody: 'not json' },
+    );
+    await expect(
+      newClient().sendMessage('EVENTID0', 'GUEST9', { message: 'x' }),
+    ).rejects.toThrow(/no push id/i);
+  });
+
+  it('escapes the recipient segment but not the server-supplied ref path', async () => {
+    const spy = mockFetch(
+      { body: { guests: [
+        { guestId: 'HOSTGUEST', userId: 'HOSTUSER', guestType: 'host' },
+        { guestId: 'GUEST9', userId: 'user/with space', guestType: 'guest' },
+      ], summary: {} } },
+      { body: GRANT },
+      { body: { idToken: 'T' } },
+      { body: { name: '-P' } },
+    );
+    await newClient().sendMessage('EVENTID0', 'GUEST9', { message: 'x' });
+    expect(spy.mock.calls[3]![0]).toBe(
+      'https://evite-fb.firebaseio.com/chat-q/events/EVENTID0/messages/h2g/user%2Fwith%20space.json?auth=T',
+    );
+  });
 });
 
 describe('EviteClient — broadcast (VERIFIED endpoint)', () => {

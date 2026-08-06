@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/chrischall/evite-mcp/compare/v0.5.0...v0.5.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **deps:** move to @fetchproxy/server 2.0.0 for the v3 handshake ([#86](https://github.com/chrischall/evite-mcp/issues/86)) ([584067b](https://github.com/chrischall/evite-mcp/commit/584067b23790176976b73764ca58d5bbaa7bd132))
+
 ## [0.5.0](https://github.com/chrischall/evite-mcp/compare/v0.4.2...v0.5.0) (2026-07-30)
 
 

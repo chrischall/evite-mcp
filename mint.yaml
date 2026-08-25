@@ -1,0 +1,60 @@
+version: 1
+name: Evite
+slug: evite
+summary: >-
+  Evite tools for Claude — list events, view guest lists & RSVPs, RSVP, message
+  guests, and create/edit events.
+#
+# Hosting note (deliberately a comment, not part of the user-facing summary):
+# this is a BROWSER-BRIDGE MCP — it reaches evite.com through the user's
+# signed-in tab via the fetchproxy bridge. A bridged registration also needs
+# runtime `fly-shared`, `bridge: true` and a `bridgePortEnv`, which are
+# registration fields this manifest has no schema for (set them over the
+# control API). `state.dataDir` below is required for `bridge`.
+env:
+  - name: EVITE_EMAIL
+    required: false
+    help: >-
+      Your Evite login email address. Optional — if omitted, the server falls
+      back to a raw session cookie or the fetchproxy browser bridge (requires
+      being signed in to evite.com).
+  - name: EVITE_PASSWORD
+    secret: true
+    required: false
+    help: >-
+      Your Evite password. Optional — see EVITE_EMAIL.
+  - name: EVITE_SESSION_COOKIE
+    secret: true
+    required: false
+    help: >-
+      A raw `cookie:` header copied from a signed-in evite.com tab (alternative
+      to email/password). Used verbatim. Optional.
+  - name: EVITE_DISABLE_FETCHPROXY
+    required: false
+    help: >-
+      Set to 1 to disable the browser-bridge fallback, making missing
+      credentials a hard error. Recommended for a hosted registration, which has
+      no browser to fall back to.
+state:
+  dataDir: true
+  reason: >-
+    The fetchproxy identity lives at $HOME/.fetchproxy/identity/<name>.json
+    and the pair code derives from it. Without a persistent $HOME every cold
+    start mints a fresh identity and re-prompts pairing in the browser; the
+    API refuses bridge without it.
+egress:
+  allow:
+    # The Evite site and its internal API.
+    - evite.com
+    - www.evite.com
+    # Firebase auth: signInWithCustomToken, called directly in client.ts.
+    - identitytoolkit.googleapis.com
+    # Photo upload POSTs to a Google Cloud Storage signed URL that the Evite
+    # API hands back as `upload_url` — a RUNTIME host, so it appears nowhere
+    # as a literal in this repo.
+    - storage.googleapis.com
+    # Per-guest messaging reads/writes the Firebase Realtime Database at
+    # `fire_config.databaseURL`, also supplied at runtime. RTDB instances live
+    # under either apex depending on age/region, so both are allowed.
+    - firebaseio.com
+    - firebasedatabase.app

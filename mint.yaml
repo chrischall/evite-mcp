@@ -2,12 +2,15 @@ version: 1
 name: Evite
 slug: evite
 summary: >-
-  Evite tools for Claude — list events, view guest lists & RSVPs, RSVP,
-  message guests, and create/edit events BROWSER-BRIDGE MCP: it reaches its
-  site through the user's signed-in tab via the fetchproxy bridge, so a
-  registration also needs runtime fly-shared, bridge: true and a
-  bridgePortEnv — registration fields this manifest has no schema for.
-  state.dataDir below is required for bridge and is why it is declared.
+  Evite tools for Claude — list events, view guest lists & RSVPs, RSVP, message
+  guests, and create/edit events.
+#
+# Hosting note (deliberately a comment, not part of the user-facing summary):
+# this is a BROWSER-BRIDGE MCP — it reaches evite.com through the user's
+# signed-in tab via the fetchproxy bridge. A bridged registration also needs
+# runtime `fly-shared`, `bridge: true` and a `bridgePortEnv`, which are
+# registration fields this manifest has no schema for (set them over the
+# control API). `state.dataDir` below is required for `bridge`.
 env:
   - name: EVITE_EMAIL
     required: false
@@ -41,7 +44,17 @@ state:
     API refuses bridge without it.
 egress:
   allow:
-    # Only hosts the SERVER process actually fetches.
+    # The Evite site and its internal API.
     - evite.com
-    - identitytoolkit.googleapis.com
     - www.evite.com
+    # Firebase auth: signInWithCustomToken, called directly in client.ts.
+    - identitytoolkit.googleapis.com
+    # Photo upload POSTs to a Google Cloud Storage signed URL that the Evite
+    # API hands back as `upload_url` — a RUNTIME host, so it appears nowhere
+    # as a literal in this repo.
+    - storage.googleapis.com
+    # Per-guest messaging reads/writes the Firebase Realtime Database at
+    # `fire_config.databaseURL`, also supplied at runtime. RTDB instances live
+    # under either apex depending on age/region, so both are allowed.
+    - firebaseio.com
+    - firebasedatabase.app

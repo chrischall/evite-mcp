@@ -13,6 +13,7 @@ import {
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
 import { mimetypeForPath, imageDimensions } from './image-meta.js';
+import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 
 /** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
 const MAX_UPLOAD_BYTES = 20_000_000;
@@ -310,6 +311,10 @@ export class EviteClient {
     const resolver = opts.resolveSession ?? resolveSession;
     this.sessions = new CookieSessionManager<ResolvedSession>({
       login: () => resolver(),
+      // ResolvedSession is already plain data ({cookieHeader, csrfToken?}), so
+      // unlike the jar-based repos in this rollout it persists as-is.
+      persistence: createSessionCache() ?? undefined,
+      onPersistError: reportCacheWriteFailure,
       // A 401/403 is a genuine session expiry → re-login + one replay. EXCEPTION:
       // a response {@link write} already recovered from via a rotated-CSRF replay
       // is tagged ({@link CSRF_RECOVERED}) and treated as NOT expired, so the

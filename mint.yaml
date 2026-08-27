@@ -35,13 +35,27 @@ env:
       Set to 1 to disable the browser-bridge fallback, making missing
       credentials a hard error. Recommended for a hosted registration, which has
       no browser to fall back to.
+  - name: EVITE_SESSION_CACHE
+    required: false
+    help: >-
+      Set to false to disable the on-disk session cache and resolve a new
+      session on every process start. Defaults to enabled.
+  - name: EVITE_SESSION_FILE
+    required: false
+    help: >-
+      Absolute path for the session cache file. Defaults to
+      $MCP_DATA_DIR/.evite-mcp/session.json.
 state:
   dataDir: true
   reason: >-
-    The fetchproxy identity lives at $HOME/.fetchproxy/identity/<name>.json
-    and the pair code derives from it. Without a persistent $HOME every cold
-    start mints a fresh identity and re-prompts pairing in the browser; the
-    API refuses bridge without it.
+    Two things live here. The fetchproxy identity is at
+    $HOME/.fetchproxy/identity/<name>.json and the pair code derives from it —
+    without a persistent $HOME every cold start mints a fresh identity and
+    re-prompts pairing in the browser, and the API refuses bridge without it.
+    The resolved session is also cached at
+    $MCP_DATA_DIR/.evite-mcp/session.json (0600), which matters most on that
+    same tier: with the cache a cold start proceeds with no browser present at
+    all. A raw EVITE_SESSION_COOKIE caches nothing.
 egress:
   allow:
     # The Evite site and its internal API.

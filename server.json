@@ -35,6 +35,18 @@
           "isRequired": false,
           "format": "string",
           "isSecret": true
+        },
+        {
+          "name": "EVITE_SESSION_CACHE",
+          "description": "Set to false to disable the on-disk session cache and re-authenticate on every process start. Defaults to enabled.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "EVITE_SESSION_FILE",
+          "description": "Absolute path for the session cache file. Defaults to $MCP_DATA_DIR/.evite-mcp/session.json.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

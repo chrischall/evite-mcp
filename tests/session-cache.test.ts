@@ -54,8 +54,15 @@ describe('which resolve tiers are worth caching', () => {
     expect(createSessionCache(pw())).not.toBeNull();
   });
 
-  it('caches the fetchproxy tier — a cached session means a cold start needs no browser', () => {
-    expect(createSessionCache({ MCP_DATA_DIR: dir, EVITE_SESSION_CACHE: 'true' })).not.toBeNull();
+  it('does NOT cache the fetchproxy tier — there is no identity to bind a record to', () => {
+    // It would benefit most: that tier cannot re-login unaided, so a cached
+    // session is what lets a cold start proceed with no browser. But the tier
+    // runs precisely when no credentials are set and the identity lives in the
+    // browser, so the only available key is a static 'fetchproxy' — under which
+    // signing into a DIFFERENT Evite account restores the previous account's
+    // session and the server acts as someone else. A browser round-trip is the
+    // cheaper mistake.
+    expect(createSessionCache({ MCP_DATA_DIR: dir, EVITE_SESSION_CACHE: 'true' })).toBeNull();
   });
 
   it('does NOT cache a raw EVITE_SESSION_COOKIE — the cookie IS the credential', () => {
@@ -109,10 +116,12 @@ describe('credential binding', () => {
     expect(createSessionCache(env)!.load()).toBeNull();
   });
 
-  it('does not reuse a password-resolved session on the fetchproxy tier', () => {
+  it('leaves a password-resolved record unread on the fetchproxy tier', () => {
+    // Belt and braces: the tier declines a cache outright, so it cannot reach
+    // another tier's record even though the file is sitting right there.
     createSessionCache(pw())!.save(record());
-    const bridge = { MCP_DATA_DIR: dir, EVITE_SESSION_CACHE: 'true' };
-    expect(createSessionCache(bridge)!.load()).toBeNull();
+    expect(existsSync(cacheFile(dir))).toBe(true);
+    expect(createSessionCache({ MCP_DATA_DIR: dir, EVITE_SESSION_CACHE: 'true' })).toBeNull();
   });
 
   it('matches the email case-insensitively', () => {

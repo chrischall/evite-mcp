@@ -54,8 +54,24 @@ function bindingFor(env: NodeJS.ProcessEnv | undefined): string | null {
   if (email && password) {
     return ['password', email.trim().toLowerCase(), password].join('\u0000');
   }
-  if (readEnvVar('EVITE_SESSION_COOKIE', { env })) return null;
-  if (!parseBoolEnv('EVITE_DISABLE_FETCHPROXY', { env })) return 'fetchproxy';
+  // Nothing else is worth caching, for two different reasons.
+  //
+  // A raw EVITE_SESSION_COOKIE is itself the credential — there is no resolve to
+  // skip, and caching it would only copy it onto a second place on disk.
+  //
+  // The fetchproxy tier is the harder call, and this reverses what the original
+  // PR claimed for it. It would benefit MOST: the session is lifted from a
+  // signed-in browser tab, so a cached one lets a cold start proceed with no
+  // browser at all. But there is nothing to bind a record to — that tier runs
+  // precisely when no credentials are configured, and the identity lives in the
+  // browser. The only available key is a static 'fetchproxy', under which
+  // signing into a DIFFERENT Evite account in that tab restores the previous
+  // account's session and the server then acts as someone else: reading their
+  // events, and writing as them. A browser round-trip is the cheaper mistake.
+  //
+  // Doing it safely needs an identity check on restore, which the synchronous
+  // load() path cannot make. Same resolution as infinitecampus-mcp, where the
+  // same static binding was found.
   return null;
 }
 

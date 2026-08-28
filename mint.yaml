@@ -57,18 +57,28 @@ state:
     same tier: with the cache a cold start proceeds with no browser present at
     all. A raw EVITE_SESSION_COOKIE caches nothing.
 egress:
+  # Only hosts the SERVER PROCESS dials. Every mode — email/password login
+  # (auth-login.ts), a raw EVITE_SESSION_COOKIE, and the fetchproxy bootstrap —
+  # ends the same way: the bridge only LIFTS cookies from the signed-in tab
+  # (auth.ts, `bootstrap()`), and every Evite call then goes out over plain
+  # Node `fetch()` from this process. The bootstrap itself binds/joins a
+  # loopback port and dials nothing outside.
   allow:
-    # The Evite site and its internal API.
-    - evite.com
+    # The Evite site and its internal API (client.ts BASE_URL, auth-login.ts
+    # ORIGIN). Only the www host is ever dialled — the apex is not in any URL
+    # this process builds, and it only ever 301s TO www.
     - www.evite.com
     # Firebase auth: signInWithCustomToken, called directly in client.ts.
     - identitytoolkit.googleapis.com
     # Photo upload POSTs to a Google Cloud Storage signed URL that the Evite
     # API hands back as `upload_url` — a RUNTIME host, so it appears nowhere
-    # as a literal in this repo.
+    # as a literal in this repo. Live captures show the path-style form
+    # (`https://storage.googleapis.com/<bucket>`, docs/EVITE-API.md); the 303
+    # it answers with is not followed (`redirect: 'manual'`).
     - storage.googleapis.com
     # Per-guest messaging reads/writes the Firebase Realtime Database at
-    # `fire_config.databaseURL`, also supplied at runtime. RTDB instances live
-    # under either apex depending on age/region, so both are allowed.
-    - firebaseio.com
-    - firebasedatabase.app
+    # `fire_config.databaseURL`, also supplied at runtime. RTDB instances are
+    # `<project>.firebaseio.com` or `<name>.<region>.firebasedatabase.app` —
+    # never the apex, and matching is exact, so both wildcards are needed.
+    - '*.firebaseio.com'
+    - '*.firebasedatabase.app'

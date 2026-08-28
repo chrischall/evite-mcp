@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/chrischall/evite-mcp/compare/v0.6.0...v0.6.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **egress:** declare only the hosts the server process dials in mint.yaml ([#104](https://github.com/chrischall/evite-mcp/issues/104)) ([1ba9a47](https://github.com/chrischall/evite-mcp/commit/1ba9a47d88722a0cc0713bc0670202a887835bb4))
+
 ## [0.6.0](https://github.com/chrischall/evite-mcp/compare/v0.5.1...v0.6.0) (2026-08-28)
 
 

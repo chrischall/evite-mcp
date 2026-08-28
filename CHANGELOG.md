@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0](https://github.com/chrischall/evite-mcp/compare/v0.5.1...v0.6.0) (2026-08-28)
+
+
+### Features
+
+* cache the resolved session so a restart skips re-resolving ([#100](https://github.com/chrischall/evite-mcp/issues/100)) ([e4dade6](https://github.com/chrischall/evite-mcp/commit/e4dade68f933767abf3120a9d283a879a1fa5ba1))
+
+
+### Bug Fixes
+
+* **cache:** stop caching the fetchproxy tier ([#103](https://github.com/chrischall/evite-mcp/issues/103)) ([5501c9f](https://github.com/chrischall/evite-mcp/commit/5501c9fc060ab74fbc4da02d6358bef5e311f03f)), closes [#101](https://github.com/chrischall/evite-mcp/issues/101)
+
+
+### Documentation
+
+* list the cache env vars in server.json and .env.example ([#102](https://github.com/chrischall/evite-mcp/issues/102)) ([281e7d6](https://github.com/chrischall/evite-mcp/commit/281e7d6224378740f0693328114868b600d24f14))
+* **skill:** declare the name this skill actually publishes under ([#97](https://github.com/chrischall/evite-mcp/issues/97)) ([4bc234e](https://github.com/chrischall/evite-mcp/commit/4bc234ef69f6f6d6d01d7cffb60fa2b052b9094f))
+
 ## [0.5.1](https://github.com/chrischall/evite-mcp/compare/v0.5.0...v0.5.1) (2026-08-06)
 
 

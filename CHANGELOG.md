@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/chrischall/evite-mcp/compare/v0.6.1...v0.7.0) (2026-08-29)
+
+
+### Features
+
+* **deps:** take @fetchproxy/server 2.2.0 so the concentrator can bind its sandbox address ([#106](https://github.com/chrischall/evite-mcp/issues/106)) ([52bec5f](https://github.com/chrischall/evite-mcp/commit/52bec5f8a8e9b58c892e92d573d470a746ab55e7))
+
 ## [0.6.1](https://github.com/chrischall/evite-mcp/compare/v0.6.0...v0.6.1) (2026-08-28)
 
 

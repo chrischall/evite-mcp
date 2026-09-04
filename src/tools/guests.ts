@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { textResult, toolAnnotations } from '@chrischall/mcp-utils';
+import { minifiedResult, toolAnnotations } from '@chrischall/mcp-utils';
+import { viewArg, viewResponse } from '../view.js';
 import type { EviteClient } from '../client.js';
 
 const eventIdArgs = z.object({
@@ -15,12 +16,12 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
         'List the guests for an Evite event (GET /services/event/v1/{id}/guests/): name, RSVP response, ' +
         'head counts, delivery status, and more.',
       annotations: toolAnnotations({ title: 'List Evite event guests' }),
-      inputSchema: eventIdArgs.shape,
+      inputSchema: { ...eventIdArgs.shape, view: viewArg() },
     },
     async (raw) => {
       const args = eventIdArgs.parse(raw);
       const data = await client.listGuests(args.event_id);
-      return textResult(data);
+      return viewResponse((raw as { view?: string }).view, data);
     },
   );
 
@@ -31,12 +32,12 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
         'Get the RSVP summary for an Evite event (yes/no/maybe/noReply plus adult/kid head counts). ' +
         'Derived from the event guests endpoint.',
       annotations: toolAnnotations({ title: 'Evite RSVP summary' }),
-      inputSchema: eventIdArgs.shape,
+      inputSchema: { ...eventIdArgs.shape, view: viewArg() },
     },
     async (raw) => {
       const args = eventIdArgs.parse(raw);
       const data = await client.rsvpSummary(args.event_id);
-      return textResult(data);
+      return viewResponse((raw as { view?: string }).view, data);
     },
   );
 }

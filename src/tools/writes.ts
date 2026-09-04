@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { textResult, toolAnnotations, schemaConfirm } from '@chrischall/mcp-utils';
+import { minifiedResult, schemaConfirm, toolAnnotations } from '@chrischall/mcp-utils';
 import type { EviteClient } from '../client.js';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -29,8 +29,8 @@ function preview(
   action: string,
   details: Record<string, unknown>,
   caveat?: string,
-): ReturnType<typeof textResult> {
-  return textResult({
+): ReturnType<typeof minifiedResult> {
+  return minifiedResult({
     preview: true,
     action,
     note: `DRY RUN — nothing was sent. Re-run with confirm: true to perform this write.${
@@ -174,7 +174,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         numberOfKids: args.number_of_kids,
         note: args.note,
       });
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -200,7 +200,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         );
       }
       const data = await client.sendMessage(args.event_id, args.guest_id, { message: args.message });
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -229,7 +229,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         groups: args.groups,
         participantCount: args.participant_count,
       });
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -258,7 +258,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         guestId: args.guest_id,
         mimetype: args.mimetype,
       });
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -295,7 +295,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         endDatetime: args.end_datetime,
         message: args.message,
       });
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -326,7 +326,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         return preview('update_event', { event_id: args.event_id, patch });
       }
       const data = await client.updateEvent(args.event_id, patch);
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -346,7 +346,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         return preview('add_guest', { event_id: args.event_id, guests: args.guests });
       }
       const data = await client.addGuest(args.event_id, args.guests);
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -375,7 +375,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         email: args.email,
         phone: args.phone,
       });
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -394,7 +394,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         return preview('remove_guest', { event_id: args.event_id, guest_id: args.guest_id });
       }
       const data = await client.removeGuest(args.event_id, args.guest_id);
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -418,7 +418,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         );
       }
       const data = await client.sendInvitation(args.event_id);
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -446,7 +446,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         );
       }
       const data = await client.cancelEvent(args.event_id);
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -469,7 +469,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         return preview('reinstate_event', { event_id: args.event_id });
       }
       const data = await client.reinstateEvent(args.event_id);
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 
@@ -489,7 +489,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         return preview('duplicate_event', { event_id: args.event_id });
       }
       const data = await client.duplicateEvent(args.event_id);
-      return textResult(data);
+      return minifiedResult(data);
     },
   );
 }

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/chrischall/evite-mcp/compare/v0.7.0...v0.8.0) (2026-09-04)
+
+
+### Features
+
+* **tools:** compact by default — strip media URLs, and minify every response ([#120](https://github.com/chrischall/evite-mcp/issues/120)) ([21200ef](https://github.com/chrischall/evite-mcp/commit/21200ef47d7c06132c964d02c8d0d4df97d38100))
+
+
+### Bug Fixes
+
+* **build:** restore the literal em dash in the package description ([#122](https://github.com/chrischall/evite-mcp/issues/122)) ([b7252bd](https://github.com/chrischall/evite-mcp/commit/b7252bd662198964faa9dc23268c3fd1f4082997))
+* **deps:** pick up @chrischall/mcp-utils 0.23.2 ([#124](https://github.com/chrischall/evite-mcp/issues/124)) ([925c8ce](https://github.com/chrischall/evite-mcp/commit/925c8ce857af3701c42dc8230a70418b9569934c))
+
+
+### Refactor
+
+* **tools:** read the SDK-validated arguments instead of re-parsing them ([#125](https://github.com/chrischall/evite-mcp/issues/125)) ([11b5175](https://github.com/chrischall/evite-mcp/commit/11b51755375d506ab2e7f00c4bb43dc4c728db91))
+
 ## [0.7.0](https://github.com/chrischall/evite-mcp/compare/v0.6.1...v0.7.0) (2026-08-29)
 
 

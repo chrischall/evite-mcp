@@ -78,10 +78,26 @@ describe('tool registration', () => {
 });
 
 describe('evite_list_events', () => {
-  it('returns events + totals and defaults filterBy=all, status=[upcoming,past]', async () => {
+  it('strips the rendered card image by DEFAULT, keeping everything else', async () => {
+    // `rendered_image_url` is a .png a model cannot see. Everything else on
+    // the event — 26 other fields — survives, because nothing here knows which
+    // of Evite's fields matter and compact does not guess.
     const client = fakeClient();
     const h = await harnessFor(client);
     const res = await h.callTool('evite_list_events', {});
+    const data = parseToolResult<{ events: Record<string, unknown>[] }>(res);
+    expect(data.events[0]).not.toHaveProperty('rendered_image_url');
+    const { rendered_image_url: _drop, ...rest } = eventsList.events[0] as Record<string, unknown>;
+    expect(data.events[0]).toEqual(rest);
+  });
+
+  it('returns events + totals and defaults filterBy=all, status=[upcoming,past]', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    // `view: 'full'` — this assertion is about the payload round-tripping
+    // whole. The default rung strips `rendered_image_url` (a .png), which the
+    // compact test below covers.
+    const res = await h.callTool('evite_list_events', { view: 'full' });
     const data = parseToolResult<typeof eventsList>(res);
     expect(data.events).toEqual(eventsList.events);
     expect(data.totals).toEqual(eventsList.totals);
@@ -145,7 +161,8 @@ describe('evite_list_guests', () => {
   it('returns the guests list for the event', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_list_guests', { event_id: 'EVENTID0' });
+    // `full`: this assertion is about the guests list round-tripping whole.
+    const res = await h.callTool('evite_list_guests', { event_id: 'EVENTID0', view: 'full' });
     const data = parseToolResult<typeof eventGuests>(res);
     expect(data.guests).toEqual(eventGuests.guests);
     expect(client.listGuests).toHaveBeenCalledWith('EVENTID0');

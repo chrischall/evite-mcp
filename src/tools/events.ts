@@ -44,8 +44,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'List Evite events' }),
       inputSchema: { ...listEventsArgs.shape, view: viewArg() },
     },
-    async (raw) => {
-      const args = listEventsArgs.parse(raw);
+    async (args) => {
       const data = await client.listEvents({
         filterBy: args.filterBy,
         status: args.status as EventStatus[],
@@ -53,7 +52,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
         numResults: args.numResults,
         filter: args.filter,
       });
-      return viewResponse((raw as { view?: string }).view, data);
+      return viewResponse(args.view, data);
     },
   );
 
@@ -65,10 +64,9 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Get Evite event detail' }),
       inputSchema: { ...eventIdArgs.shape, view: viewArg() },
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       const data = await client.getEvent(args.event_id);
-      return viewResponse((raw as { view?: string }).view, data);
+      return viewResponse(args.view, data);
     },
   );
 
@@ -84,10 +82,9 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'List Evite invitation templates' }),
       inputSchema: { ...listTemplatesArgs.shape, view: viewArg() },
     },
-    async (raw) => {
-      const args = listTemplatesArgs.parse(raw);
+    async (args) => {
       const data = await client.listTemplates(args.category, args.free_only);
-      return viewResponse((raw as { view?: string }).view, data);
+      return viewResponse(args.view, data);
     },
   );
 }

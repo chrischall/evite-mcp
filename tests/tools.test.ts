@@ -139,6 +139,42 @@ describe('evite_list_events', () => {
   });
 });
 
+// `view` is ours. It selects a response shape on the way OUT and means nothing
+// to Evite, so it must never appear in anything the client sends. The handlers
+// used to be protected by accident — they re-parsed their arguments through a
+// schema that did not contain `view`, so the key was stripped before it could
+// reach a request. Now that they read the SDK-validated object directly, the
+// protection has to be a deliberate one: name the fields you forward, and pin
+// it here.
+describe('view never reaches Evite', () => {
+  it('is absent from every read tool\'s upstream call, on every rung', async () => {
+    for (const rung of ['compact', 'full', undefined]) {
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const view = rung === undefined ? {} : { view: rung };
+
+      await h.callTool('evite_list_events', { ...view });
+      await h.callTool('evite_get_event', { event_id: 'e1', ...view });
+      await h.callTool('evite_list_templates', { category: 'party', ...view });
+      await h.callTool('evite_list_guests', { event_id: 'e1', ...view });
+      await h.callTool('evite_rsvp_summary', { event_id: 'e1', ...view });
+      await h.callTool('evite_list_messages', { event_id: 'e1', ...view });
+
+      const forwarded = [
+        client.listEvents,
+        client.getEvent,
+        client.listTemplates,
+        client.listGuests,
+        client.rsvpSummary,
+        client.listMessages,
+      ].flatMap((fn) => fn.mock.calls);
+      expect(forwarded.length).toBeGreaterThan(0);
+      expect(JSON.stringify(forwarded)).not.toContain('view');
+      await h.close();
+    }
+  });
+});
+
 describe('evite_get_event', () => {
   it('returns event detail for the given event_id', async () => {
     const client = fakeClient();

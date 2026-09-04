@@ -156,8 +156,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false }),
       inputSchema: rsvpArgs.shape,
     },
-    async (raw) => {
-      const args = rsvpArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('rsvp', {
           event_id: args.event_id,
@@ -189,8 +188,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false }),
       inputSchema: sendMessageArgs.shape,
     },
-    async (raw) => {
-      const args = sendMessageArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview(
           'send_message',
@@ -214,8 +212,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false }),
       inputSchema: broadcastArgs.shape,
     },
-    async (raw) => {
-      const args = broadcastArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('broadcast', {
           event_id: args.event_id,
@@ -243,8 +240,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false }),
       inputSchema: uploadPhotoArgs.shape,
     },
-    async (raw) => {
-      const args = uploadPhotoArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('upload_photo', {
           event_id: args.event_id,
@@ -273,8 +269,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false }),
       inputSchema: createEventArgs.shape,
     },
-    async (raw) => {
-      const args = createEventArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview(
           'create_event',
@@ -308,8 +303,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false }),
       inputSchema: updateEventArgs.shape,
     },
-    async (raw) => {
-      const args = updateEventArgs.parse(raw);
+    async (args) => {
 
       // Build the patch from only the provided fields (map snake_case → wire).
       const patch: Record<string, unknown> = {};
@@ -340,8 +334,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false }),
       inputSchema: addGuestArgs.shape,
     },
-    async (raw) => {
-      const args = addGuestArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('add_guest', { event_id: args.event_id, guests: args.guests });
       }
@@ -359,8 +352,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false }),
       inputSchema: updateGuestArgs.shape,
     },
-    async (raw) => {
-      const args = updateGuestArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('update_guest', {
           event_id: args.event_id,
@@ -388,8 +380,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Remove an Evite guest', readOnly: false }),
       inputSchema: removeGuestArgs.shape,
     },
-    async (raw) => {
-      const args = removeGuestArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('remove_guest', { event_id: args.event_id, guest_id: args.guest_id });
       }
@@ -408,8 +399,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false }),
       inputSchema: eventIdArgs.shape,
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview(
           'send',
@@ -436,8 +426,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       }),
       inputSchema: eventIdArgs.shape,
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview(
           'cancel_event',
@@ -463,8 +452,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       }),
       inputSchema: eventIdArgs.shape,
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('reinstate_event', { event_id: args.event_id });
       }
@@ -483,8 +471,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false }),
       inputSchema: eventIdArgs.shape,
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       if (args.confirm !== true) {
         return preview('duplicate_event', { event_id: args.event_id });
       }

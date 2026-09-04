@@ -18,10 +18,9 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'List Evite event guests' }),
       inputSchema: { ...eventIdArgs.shape, view: viewArg() },
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       const data = await client.listGuests(args.event_id);
-      return viewResponse((raw as { view?: string }).view, data);
+      return viewResponse(args.view, data);
     },
   );
 
@@ -34,10 +33,9 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
       annotations: toolAnnotations({ title: 'Evite RSVP summary' }),
       inputSchema: { ...eventIdArgs.shape, view: viewArg() },
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       const data = await client.rsvpSummary(args.event_id);
-      return viewResponse((raw as { view?: string }).view, data);
+      return viewResponse(args.view, data);
     },
   );
 }

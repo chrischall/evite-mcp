@@ -17,10 +17,9 @@ export function registerMessageTools(server: McpServer, client: EviteClient): vo
       annotations: toolAnnotations({ title: 'List Evite event messages' }),
       inputSchema: { ...eventIdArgs.shape, view: viewArg() },
     },
-    async (raw) => {
-      const args = eventIdArgs.parse(raw);
+    async (args) => {
       const data = await client.listMessages(args.event_id);
-      return viewResponse((raw as { view?: string }).view, data);
+      return viewResponse(args.view, data);
     },
   );
 }

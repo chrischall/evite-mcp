@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/chrischall/evite-mcp/compare/v0.8.0...v0.8.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.10.0 and @chrischall/mcp-utils 0.26.1 ([#135](https://github.com/chrischall/evite-mcp/issues/135)) ([1c78ecb](https://github.com/chrischall/evite-mcp/commit/1c78ecb54ec7244894132c0ec0c1271e3beeff54))
+* **deps:** bump hono from 4.13.0 to 4.13.7 ([#133](https://github.com/chrischall/evite-mcp/issues/133)) ([9ef11ae](https://github.com/chrischall/evite-mcp/commit/9ef11aeef9a7b81c7a226e6abc989126f78962c6))
+* **deps:** declare the peer floors mcp-utils 0.26.1 requires ([#136](https://github.com/chrischall/evite-mcp/issues/136)) ([e74efe7](https://github.com/chrischall/evite-mcp/commit/e74efe7d9f70a1e878901fd8c62863b3182d909b))
+
 ## [0.8.0](https://github.com/chrischall/evite-mcp/compare/v0.7.0...v0.8.0) (2026-09-04)
 
 

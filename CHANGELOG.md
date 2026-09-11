@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/chrischall/evite-mcp/compare/v0.8.1...v0.8.2) (2026-09-11)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.11.3, so the hosted extension pin persists ([#138](https://github.com/chrischall/evite-mcp/issues/138)) ([5736450](https://github.com/chrischall/evite-mcp/commit/57364504afada4be491a5fe1529fc214b761e23b))
+
 ## [0.8.1](https://github.com/chrischall/evite-mcp/compare/v0.8.0...v0.8.1) (2026-09-10)
 
 

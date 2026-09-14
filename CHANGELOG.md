@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.2](https://github.com/chrischall/evite-mcp/compare/v0.8.1...v0.8.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.11.3, so the hosted extension pin persists ([#138](https://github.com/chrischall/evite-mcp/issues/138)) ([5736450](https://github.com/chrischall/evite-mcp/commit/57364504afada4be491a5fe1529fc214b761e23b))
+* **deps:** @fetchproxy/server 3.0.0 — protocol v4 (forward secrecy, AAD over the frame) ([#142](https://github.com/chrischall/evite-mcp/issues/142)) ([a626204](https://github.com/chrischall/evite-mcp/commit/a62620473a50de6f0fc46049e6e8799f0588e060))
+* **deps:** bump the production-dependencies group with 3 updates ([#141](https://github.com/chrischall/evite-mcp/issues/141)) ([5233d14](https://github.com/chrischall/evite-mcp/commit/5233d142c072dce8b2c8296346fa6c356e9389f5))
+
 ## [0.8.1](https://github.com/chrischall/evite-mcp/compare/v0.8.0...v0.8.1) (2026-09-10)
 
 

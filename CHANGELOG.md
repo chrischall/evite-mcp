@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/chrischall/evite-mcp/compare/v0.8.2...v0.8.3) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 3.0.1 — capped peer frames, logged load drops, atomic identity writes ([#143](https://github.com/chrischall/evite-mcp/issues/143)) ([ca5ba1c](https://github.com/chrischall/evite-mcp/commit/ca5ba1ce867709e09876cf7e1fb344e738768207))
+
 ## [0.8.2](https://github.com/chrischall/evite-mcp/compare/v0.8.1...v0.8.2) (2026-09-14)
 
 

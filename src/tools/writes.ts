@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { minifiedResult, schemaConfirm, toolAnnotations } from '@chrischall/mcp-utils';
 import type { EviteClient } from '../client.js';
@@ -154,7 +154,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'RSVP for a guest on an Evite event. Confirm-gated: without confirm:true this returns a ' +
         'dry-run preview and sends nothing.',
       annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false }),
-      inputSchema: rsvpArgs.shape,
+      inputSchema: rsvpArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -186,7 +186,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'only a host can use it. Confirm-gated: without confirm:true this returns a dry-run ' +
         'preview and sends nothing.',
       annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false }),
-      inputSchema: sendMessageArgs.shape,
+      inputSchema: sendMessageArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -210,7 +210,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'who replied yes/maybe). This really emails every guest in those segments. ' +
         'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing.',
       annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false }),
-      inputSchema: broadcastArgs.shape,
+      inputSchema: broadcastArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -238,7 +238,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'photo to the event album. Needs your guest_id on the event (from evite_list_guests). ' +
         'Confirm-gated: without confirm:true this returns a dry-run preview and uploads nothing.',
       annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false }),
-      inputSchema: uploadPhotoArgs.shape,
+      inputSchema: uploadPhotoArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -267,7 +267,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'NOTE: the create API returns a 500 even when it succeeds (the draft is created), so this ' +
         'call may throw though the event exists — re-list drafts rather than retrying.',
       annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false }),
-      inputSchema: createEventArgs.shape,
+      inputSchema: createEventArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -301,7 +301,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Edit an existing Evite event (only the fields you pass change). Confirm-gated: without ' +
         'confirm:true this returns a dry-run preview and sends nothing.',
       annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false }),
-      inputSchema: updateEventArgs.shape,
+      inputSchema: updateEventArgs,
     },
     async (args) => {
 
@@ -332,7 +332,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'evite_send. Confirm-gated: without confirm:true this returns a dry-run preview. ' +
         'NB: guests only persist on a finalized (sent/sending) event, not a bare new draft.',
       annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false }),
-      inputSchema: addGuestArgs.shape,
+      inputSchema: addGuestArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -350,7 +350,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         "Edit a draft (un-sent) guest's name/email/phone on an Evite event. Confirm-gated: " +
         'without confirm:true this returns a dry-run preview and changes nothing.',
       annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false }),
-      inputSchema: updateGuestArgs.shape,
+      inputSchema: updateGuestArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -378,7 +378,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Remove a draft (un-sent) guest from an Evite event. Confirm-gated: without confirm:true ' +
         'this returns a dry-run preview and removes nothing.',
       annotations: toolAnnotations({ title: 'Remove an Evite guest', readOnly: false }),
-      inputSchema: removeGuestArgs.shape,
+      inputSchema: removeGuestArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -397,7 +397,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'THIS EMAILS GUESTS. Confirm-gated: without confirm:true this returns a dry-run preview ' +
         'and sends nothing.',
       annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false }),
-      inputSchema: eventIdArgs.shape,
+      inputSchema: eventIdArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -424,7 +424,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         readOnly: false,
         idempotent: true,
       }),
-      inputSchema: eventIdArgs.shape,
+      inputSchema: eventIdArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -450,7 +450,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         readOnly: false,
         idempotent: true,
       }),
-      inputSchema: eventIdArgs.shape,
+      inputSchema: eventIdArgs,
     },
     async (args) => {
       if (args.confirm !== true) {
@@ -469,7 +469,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'new draft event id. Confirm-gated: without confirm:true this returns a dry-run preview ' +
         'and creates nothing.',
       annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false }),
-      inputSchema: eventIdArgs.shape,
+      inputSchema: eventIdArgs,
     },
     async (args) => {
       if (args.confirm !== true) {

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/chrischall/evite-mcp/compare/v0.8.3...v1.0.0) (2026-09-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** migrate server to SDK v2 ([#146](https://github.com/chrischall/evite-mcp/issues/146))
+
+### Features
+
+* **mcp:** migrate server to SDK v2 ([#146](https://github.com/chrischall/evite-mcp/issues/146)) ([7e535e2](https://github.com/chrischall/evite-mcp/commit/7e535e23f7d0e7f7de61ced1d589a775465cb9e3))
+
 ## [0.8.3](https://github.com/chrischall/evite-mcp/compare/v0.8.2...v0.8.3) (2026-09-15)
 
 

@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { minifiedResult, toolAnnotations } from '@chrischall/mcp-utils';
 import { viewArg, viewResponse } from '../view.js';
@@ -42,7 +42,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
         'List your Evite events (GET /services/events/v1/). Returns events plus a totals breakdown. ' +
         'filterBy=others returns events where you are a guest.',
       annotations: toolAnnotations({ title: 'List Evite events' }),
-      inputSchema: { ...listEventsArgs.shape, view: viewArg() },
+      inputSchema: z.object({ ...listEventsArgs.shape, view: viewArg() }),
     },
     async (args) => {
       const data = await client.listEvents({
@@ -62,7 +62,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
       description:
         'Get a single Evite event detail (GET /services/event/v1/{id}): event, settings, location, and more.',
       annotations: toolAnnotations({ title: 'Get Evite event detail' }),
-      inputSchema: { ...eventIdArgs.shape, view: viewArg() },
+      inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {
       const data = await client.getEvent(args.event_id);
@@ -80,7 +80,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
         'Set free_only:true to list only free templates. Returns each template’s slug (= ' +
         'template_name) and a readable display name.',
       annotations: toolAnnotations({ title: 'List Evite invitation templates' }),
-      inputSchema: { ...listTemplatesArgs.shape, view: viewArg() },
+      inputSchema: z.object({ ...listTemplatesArgs.shape, view: viewArg() }),
     },
     async (args) => {
       const data = await client.listTemplates(args.category, args.free_only);

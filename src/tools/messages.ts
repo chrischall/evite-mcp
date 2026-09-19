@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { minifiedResult, toolAnnotations } from '@chrischall/mcp-utils';
 import { viewArg, viewResponse } from '../view.js';
@@ -15,7 +15,7 @@ export function registerMessageTools(server: McpServer, client: EviteClient): vo
       description:
         "List the messages on an Evite event's Messages tab (GET /services/event/v1/{id}/posts/).",
       annotations: toolAnnotations({ title: 'List Evite event messages' }),
-      inputSchema: { ...eventIdArgs.shape, view: viewArg() },
+      inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {
       const data = await client.listMessages(args.event_id);

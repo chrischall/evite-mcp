@@ -84,6 +84,7 @@
         "src/index.ts",
         "src/auth.ts"
       ],
+      "bump-minor-pre-major": true,
       "include-v-in-tag": true,
       "include-component-in-tag": false
     }

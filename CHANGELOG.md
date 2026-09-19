@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/chrischall/evite-mcp/compare/v1.0.0...v1.1.0) (2026-09-19)
+
+
+### Features
+
+* **deps:** take mcp-utils 1.0.0, fixing server/discover ([#152](https://github.com/chrischall/evite-mcp/issues/152)) ([a5d640a](https://github.com/chrischall/evite-mcp/commit/a5d640a9fdfa55d7c0ea12ab4aa39028c3141cf8))
+
+
+### Documentation
+
+* correct two stale CLAUDE.md claims after the SDK v2 migration ([#150](https://github.com/chrischall/evite-mcp/issues/150)) ([562fc6c](https://github.com/chrischall/evite-mcp/commit/562fc6c2456508086e49ee9c0f33e1fea3d4fb2d)), closes [#147](https://github.com/chrischall/evite-mcp/issues/147)
+
 ## [1.0.0](https://github.com/chrischall/evite-mcp/compare/v0.8.3...v1.0.0) (2026-09-19)
 
 

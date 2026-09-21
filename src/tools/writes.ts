@@ -153,7 +153,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'RSVP for a guest on an Evite event. Confirm-gated: without confirm:true this returns a ' +
         'dry-run preview and sends nothing.',
-      annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false }),
+      annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false, destructive: true }),
       inputSchema: rsvpArgs,
     },
     async (args) => {
@@ -185,7 +185,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Sent as the event host (Evite delivers per-guest chat over Firebase, not REST), so ' +
         'only a host can use it. Confirm-gated: without confirm:true this returns a dry-run ' +
         'preview and sends nothing.',
-      annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false, destructive: true }),
       inputSchema: sendMessageArgs,
     },
     async (args) => {
@@ -209,7 +209,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Broadcast a message to whole RSVP segments of an Evite event at once (e.g. everyone ' +
         'who replied yes/maybe). This really emails every guest in those segments. ' +
         'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing.',
-      annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false, destructive: true }),
       inputSchema: broadcastArgs,
     },
     async (args) => {
@@ -237,7 +237,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         "Upload a local image to an Evite event's shared photo gallery. This really adds the " +
         'photo to the event album. Needs your guest_id on the event (from evite_list_guests). ' +
         'Confirm-gated: without confirm:true this returns a dry-run preview and uploads nothing.',
-      annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false, destructive: false }),
       inputSchema: uploadPhotoArgs,
     },
     async (args) => {
@@ -266,7 +266,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing. ' +
         'NOTE: the create API returns a 500 even when it succeeds (the draft is created), so this ' +
         'call may throw though the event exists — re-list drafts rather than retrying.',
-      annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false, destructive: false }),
       inputSchema: createEventArgs,
     },
     async (args) => {
@@ -300,7 +300,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Edit an existing Evite event (only the fields you pass change). Confirm-gated: without ' +
         'confirm:true this returns a dry-run preview and sends nothing.',
-      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: false }),
       inputSchema: updateEventArgs,
     },
     async (args) => {
@@ -331,7 +331,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         "Add guests to an event's draft (un-sent) guest list. Nothing is emailed until you " +
         'evite_send. Confirm-gated: without confirm:true this returns a dry-run preview. ' +
         'NB: guests only persist on a finalized (sent/sending) event, not a bare new draft.',
-      annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false, destructive: false }),
       inputSchema: addGuestArgs,
     },
     async (args) => {
@@ -349,7 +349,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         "Edit a draft (un-sent) guest's name/email/phone on an Evite event. Confirm-gated: " +
         'without confirm:true this returns a dry-run preview and changes nothing.',
-      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: false }),
       inputSchema: updateGuestArgs,
     },
     async (args) => {
@@ -377,7 +377,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Remove a draft (un-sent) guest from an Evite event. Confirm-gated: without confirm:true ' +
         'this returns a dry-run preview and removes nothing.',
-      annotations: toolAnnotations({ title: 'Remove an Evite guest', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Remove an Evite guest', readOnly: false, destructive: false }),
       inputSchema: removeGuestArgs,
     },
     async (args) => {
@@ -396,7 +396,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Send the invitation to the ready-to-send (draft) guests of an event ("Send now"). ' +
         'THIS EMAILS GUESTS. Confirm-gated: without confirm:true this returns a dry-run preview ' +
         'and sends nothing.',
-      annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false, destructive: true }),
       inputSchema: eventIdArgs,
     },
     async (args) => {
@@ -423,6 +423,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         title: 'Cancel an Evite event',
         readOnly: false,
         idempotent: true,
+        destructive: true,
       }),
       inputSchema: eventIdArgs,
     },
@@ -449,6 +450,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         title: 'Reinstate an Evite event',
         readOnly: false,
         idempotent: true,
+        destructive: false,
       }),
       inputSchema: eventIdArgs,
     },
@@ -468,7 +470,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Duplicate an Evite event into a fresh draft (the "Duplicate event" action). Returns the ' +
         'new draft event id. Confirm-gated: without confirm:true this returns a dry-run preview ' +
         'and creates nothing.',
-      annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false }),
+      annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false, destructive: false }),
       inputSchema: eventIdArgs,
     },
     async (args) => {

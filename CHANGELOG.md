@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/chrischall/evite-mcp/compare/v1.1.0...v1.1.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deps:** bump zod in the production-dependencies group ([#155](https://github.com/chrischall/evite-mcp/issues/155)) ([cb38312](https://github.com/chrischall/evite-mcp/commit/cb38312d6da3fe25fd983f0e0cc9af88e34b52f1))
+* **tools:** separate the draft edits from the things guests see ([#157](https://github.com/chrischall/evite-mcp/issues/157)) ([e25f787](https://github.com/chrischall/evite-mcp/commit/e25f787d23befb91eb505aac370d8479c184981c))
+
 ## [1.1.0](https://github.com/chrischall/evite-mcp/compare/v1.0.0...v1.1.0) (2026-09-19)
 
 

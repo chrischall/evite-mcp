@@ -107,6 +107,28 @@ export function withFreshCsrf(session: ResolvedSession, token: string): Resolved
  */
 export const CSRF_HEADER = 'X-CSRFToken';
 
+/**
+ * A non-2xx answer from an Evite write, carrying the HTTP status so a caller can
+ * tell failure modes apart (e.g. {@link EviteClient.createEvent}'s 500-on-success).
+ * The message is the shared {@link formatApiError} text (redacted + truncated).
+ */
+export class EviteApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EviteApiError';
+  }
+}
+
+/**
+ * How far back (by the list's `updated` stamp) a same-title draft may be and
+ * still count as the one a 500'd create just made. Generous, to absorb clock
+ * skew between this machine and Evite.
+ */
+const CREATE_RECOVERY_WINDOW_MS = 5 * 60_000;
+
 /** Health report surfaced by the `evite_healthcheck` tool. */
 export interface EviteHealth {
   ok: boolean;
@@ -560,7 +582,10 @@ export class EviteClient {
     }
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(formatApiError(response.status, method, path, text, { service: 'Evite' }));
+      throw new EviteApiError(
+        response.status,
+        formatApiError(response.status, method, path, text, { service: 'Evite' }),
+      );
     }
 
     return (await response.json().catch(() => ({}))) as T;
@@ -970,12 +995,64 @@ export class EviteClient {
    * VERIFIED (live probe 2026-06-01) — with caveat: this request DID create a
    * draft event (it appeared in My Events as a `draft`). BUT the API returns
    * `500 "Unknown error"` even on that success (a secondary post-create step
-   * fails), so {@link write} will THROW despite the event existing. Until that's
-   * understood, treat a 500 from this call as "possibly created" — re-query the
-   * draft list rather than retrying blindly. See issue #3.
+   * fails). Throwing on that 500 invited a retry, and every retry minted another
+   * draft (fleet-audit #101). So a 500 is resolved here instead: re-list the
+   * host's drafts and return the fresh one with the same title as created; when
+   * none can be confirmed, return a `created: 'unknown'` result telling the
+   * caller to check the drafts — never an error, so nothing retries blindly.
+   * Any other failure still throws (nothing was created).
    */
   async createEvent(input: CreateEventInput): Promise<unknown> {
-    return this.write('POST', '/services/event/v1/', { event: { ...input } });
+    const startedAt = Date.now();
+    try {
+      return await this.write('POST', '/services/event/v1/', { event: { ...input } });
+    } catch (err) {
+      if (!(err instanceof EviteApiError) || err.status !== 500) throw err;
+    }
+
+    const draft = await this.findFreshDraft(input.title, startedAt).catch(() => undefined);
+    if (draft) {
+      return {
+        created: true,
+        eventId: draft.event_id,
+        event: draft,
+        note:
+          'Evite answered the create with a 500, but the draft was created (found in your drafts). ' +
+          'Do not create it again.',
+      };
+    }
+    return {
+      created: 'unknown',
+      note:
+        'Evite answered the create with a 500, which it also does when the draft WAS created, and ' +
+        'the new draft could not be confirmed. Do not retry: check evite_list_events with status ' +
+        '"draft" first — retrying may create a duplicate.',
+    };
+  }
+
+  /**
+   * The newest of the host's drafts titled {@link title} whose `updated` stamp is
+   * within {@link CREATE_RECOVERY_WINDOW_MS} of {@link since} (a draft with no
+   * stamp is accepted on its title alone). Used by {@link createEvent}.
+   */
+  private async findFreshDraft(
+    title: string,
+    since: number,
+  ): Promise<{ event_id: string; updated?: string; [key: string]: unknown } | undefined> {
+    const { events } = await this.listEvents({ filterBy: 'host', status: ['draft'], numResults: 50 });
+    const stamp = (e: { updated?: string }): number => Date.parse(e.updated ?? '');
+    // Newest first; an unstamped draft ranks as oldest.
+    const rank = (e: { updated?: string }): number => stamp(e) || 0;
+    const candidates = (events as Array<{ event_id?: string; title?: string; updated?: string }>)
+      .filter((e): e is { event_id: string; title: string; updated?: string } =>
+        Boolean(e.event_id) && e.title === title,
+      )
+      .filter((e) => {
+        const t = stamp(e);
+        return Number.isNaN(t) || t >= since - CREATE_RECOVERY_WINDOW_MS;
+      })
+      .sort((a, b) => rank(b) - rank(a));
+    return candidates[0];
   }
 
   /**

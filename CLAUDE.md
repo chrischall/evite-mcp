@@ -106,7 +106,7 @@ All endpoints are live-verified (probe 2026-06-01/02) — see `docs/EVITE-API.md
 - **Multi-API-base write surface (three bases):** REST `/services/…` (most writes), legacy `/ajax/event/{id}/…` (the draft guest list), and `/tsunami/…` (messaging — `send_message`, `broadcast`). `duplicate_event` hits `/plus/create/…`.
 - **`X-CSRFToken`** is the (single, centralized) header carrying the token on writes; set in `write()` only when the session resolved a token.
 - **Assumed-not-captured bodies (issue #3):** `evite_send_message` and `evite_send` endpoints are verified but their exact request **bodies** are still assumed (the observer captured the URL, not the body). `broadcast`'s body, by contrast, *was* fully captured.
-- **`create_event` returns 500 on success:** the draft IS created but a secondary post-create step 500s, so `write()` throws despite success. Re-list drafts rather than retrying blindly.
+- **`create_event` returns 500 on success:** the draft IS created but a secondary post-create step 500s. `createEvent()` catches that 500 (`EviteApiError.status`), re-lists the host's drafts, and returns `{created: true, eventId}` for the fresh same-title draft — or `{created: 'unknown'}` with a do-not-retry note. It never throws on that 500, so nothing retries into duplicate drafts (fleet-audit #101).
 - **Templates are scraped, not API:** the gallery is server-rendered; `listTemplates` regex-scrapes `/invitation/{slug}/…` links out of the category page HTML.
 - **Draft guests only persist on a finalized event** (status `sending`); on a bare new `draft` the add-guest POST 200s but drops the guest.
 

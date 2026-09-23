@@ -637,6 +637,94 @@ describe('EviteClient — createEvent', () => {
       event: { title: 'Pool Party', startDatetime: '2026-07-01T18:00:00', templateName: 'camp-confetti' },
     });
   });
+
+  // fleet-audit #101: Evite answers the create with `500 "Unknown error"` even
+  // though the draft WAS created. Throwing made the model (or the host's
+  // auto-retry) call again, and every retry minted another draft.
+  describe('500-on-success recovery', () => {
+    const input = { title: 'Pool Party', startDatetime: '2026-07-01T18:00:00', templateName: 'camp-confetti' };
+    const draft = (id: string, title: string, updated: string | undefined) => ({
+      event_id: id,
+      title,
+      status: 'draft',
+      ...(updated === undefined ? {} : { updated }),
+    });
+    const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+    it('finds the draft the 500 actually created and reports it as created (no throw, no second POST)', async () => {
+      const spy = mockFetch(
+        { status: 500, rawBody: '{"error":"Unknown error"}' },
+        {
+          body: {
+            events: [
+              draft('OLDER', 'Pool Party', ago(3 * 60_000)),
+              draft('NEW1', 'Pool Party', ago(1_000)),
+              draft('OTHER', 'Something else', ago(500)),
+            ],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe(true);
+      expect(result.eventId).toBe('NEW1');
+      expect(String(result.note)).toMatch(/500/);
+
+      // The recovery re-lists the host's drafts; nothing is POSTed twice.
+      expect(spy).toHaveBeenCalledTimes(2);
+      const listUrl = spy.mock.calls[1]![0] as string;
+      expect(listUrl).toContain('/services/events/v1/?');
+      expect(listUrl).toContain('status=draft');
+      expect((spy.mock.calls[1]![1] as RequestInit).method).toBe('GET');
+    });
+
+    it('accepts a same-title draft that carries no updated timestamp', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        { body: { events: [draft('NOTS', 'Pool Party', undefined)], totals: {} } },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result).toMatchObject({ created: true, eventId: 'NOTS' });
+    });
+
+    it('prefers a freshly-stamped match over an unstamped one', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        {
+          body: {
+            events: [draft('NOTS', 'Pool Party', undefined), draft('NEW2', 'Pool Party', ago(2_000))],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result).toMatchObject({ created: true, eventId: 'NEW2' });
+    });
+
+    it('returns a do-not-retry "unknown" result when no fresh matching draft is found', async () => {
+      const spy = mockFetch(
+        { status: 500, rawBody: '' },
+        { body: { events: [draft('STALE', 'Pool Party', ago(60 * 60_000))], totals: {} } },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+      expect(result.eventId).toBeUndefined();
+      expect(String(result.note)).toMatch(/do not retry/i);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns the "unknown" result when the confirming re-list itself fails', async () => {
+      mockFetch({ status: 500, rawBody: '' }, { status: 502, rawBody: 'bad gateway' });
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+    });
+
+    it('still throws for a non-500 failure (nothing was created)', async () => {
+      const spy = mockFetch({ status: 400, rawBody: '{"detail":"templateName required"}' });
+      await expect(newClient().createEvent(input)).rejects.toThrow(/400/);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('EviteClient — updateEvent (VERIFIED endpoint)', () => {

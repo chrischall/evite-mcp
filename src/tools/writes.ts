@@ -279,8 +279,9 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Create an Evite event (as a draft). Requires title, start_datetime, and template_name. ' +
         'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing. ' +
-        'NOTE: the create API returns a 500 even when it succeeds (the draft is created), so this ' +
-        'call may throw though the event exists — re-list drafts rather than retrying.',
+        'Evite answers a create with a 500 even when the draft IS created; this tool handles that ' +
+        'by re-listing your drafts, and returns created:true with the eventId, or created:"unknown" ' +
+        'when it cannot confirm — never call it again for the same event; check the drafts instead.',
       annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false, destructive: false }),
       inputSchema: createEventArgs,
     },
@@ -295,7 +296,8 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
             end_datetime: args.end_datetime,
             message: args.message,
           },
-          'Create returns a 500 even on success (the draft IS created) — re-list drafts to confirm.',
+          'Evite answers a create with a 500 even on success; the tool confirms the new draft ' +
+            'itself, so run it once and do not retry.',
         );
       }
       const data = await client.createEvent({

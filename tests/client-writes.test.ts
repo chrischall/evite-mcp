@@ -8,7 +8,7 @@ import {
   freshCsrfFromResponse,
   withFreshCsrf,
 } from '../src/client.js';
-import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
+import { McpToolError, SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
 
 /**
  * Stub `fetch` with a queue of responses. Returns the spy.
@@ -825,12 +825,24 @@ describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
     expect(result.customizeUrl).toContain('source_event=EVENTID0');
   });
 
-  it('maps 401/403 to SessionNotAuthenticatedError', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 403 }) as unknown as Response,
+  it('maps a 403 on a dead session (probe also 403s) to SessionNotAuthenticatedError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response(null, { status: 403 }) as unknown as Response,
     );
     const client = newClient();
     await expect(client.duplicateEvent('E')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
+  it('maps a 403 on a live session (probe OK) to a forbidden error', async () => {
+    mockFetch({ status: 403, rawBody: '' }, { body: { events: [], totals: {} } });
+    const err = await newClient().duplicateEvent('E').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
+  it('maps a 401 to SessionNotAuthenticatedError', async () => {
+    mockFetch({ status: 401, rawBody: '' });
+    await expect(newClient().duplicateEvent('E')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
 
   it('throws with the response body when the Location has no /invitation/ segment', async () => {
@@ -1008,6 +1020,20 @@ describe('EviteClient — write auth recovery (rotated CSRF + re-login)', () => 
     );
   });
 
+  it('a non-CSRF 403 on a live session (host-only action) is forbidden — no re-login', async () => {
+    const spy = mockFetchWithCookies(
+      { status: 403, body: { detail: 'You do not have permission to perform this action.' } },
+      { status: 200, body: { events: [], totals: {} } }, // session probe
+    );
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+    const err = await client.cancelEvent('NOT_MY_EVENT').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(2); // the write + the probe, no replay
+  });
+
   it('caps recovery at one replay — a persistent 403 surfaces rather than looping', async () => {
     // Every response 403s and keeps rotating the token: the client must NOT loop.
     const spy = mockFetchWithCookies({
@@ -1017,9 +1043,11 @@ describe('EviteClient — write auth recovery (rotated CSRF + re-login)', () => 
     const resolver = vi.fn(async () => fakeSession);
     const client = new EviteClient({ resolveSession: resolver });
 
-    await expect(client.cancelEvent('EVENTID0')).rejects.toBeInstanceOf(
-      SessionNotAuthenticatedError,
-    );
+    // The replay carried a freshly-rotated token and STILL 403'd, so this is an
+    // authorization refusal, not a stale session (fleet-audit #100).
+    const err = await client.cancelEvent('EVENTID0').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
     // Original + exactly one replay = two requests, then it gives up.
     expect(spy).toHaveBeenCalledTimes(2);
   });

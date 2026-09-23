@@ -7,11 +7,14 @@ import {
   formatApiError,
   McpToolError,
   parseCookieHeader,
+  RateLimitError,
   readFileHead,
   SessionNotAuthenticatedError,
+  UnreachableError,
 } from '@chrischall/mcp-utils';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
+import { InvalidCredentialsError } from './auth-login.js';
 import {
   IMAGE_MIMETYPES,
   imageDimensions,
@@ -60,6 +63,36 @@ function markCsrfRecovered(res: Response): Response {
 /** Whether a response was tagged as CSRF-recovered by {@link markCsrfRecovered}. */
 function isCsrfRecovered(res: Response): boolean {
   return (res as Response & { [CSRF_RECOVERED]?: boolean })[CSRF_RECOVERED] === true;
+}
+
+/**
+ * What a 403 means. Evite 403s BOTH a dead session and a live one that simply
+ * may not touch this resource (someone else's event, a host-only action by a
+ * guest). Only the first warrants a password re-login (fleet-audit #100).
+ */
+type ForbiddenKind = 'expired' | 'forbidden';
+
+/**
+ * A 403 body that names authentication (DRF's "Authentication credentials were
+ * not provided.", a CSRF failure, a login redirect page, …) — i.e. the session,
+ * not the permission, is the problem.
+ */
+const AUTH_403_BODY = /csrf|authenticat|credential|log\s*-?in|sign\s*-?in|session|expired/i;
+
+/**
+ * A cheap authenticated read used to settle an ambiguous 403: if the same
+ * session can still list its events, it is alive and the 403 is a refusal.
+ */
+const SESSION_PROBE_PATH = '/services/events/v1/?filterBy=all&status=upcoming&type=invitation&numResults=1';
+
+/** The error for a 403 on a session that is still valid. */
+function forbiddenError(method: string, path: string): McpToolError {
+  return new McpToolError(`Evite refused ${method} ${path} (403 Forbidden).`, {
+    hint:
+      'Your Evite session is valid, but this account may not have access to that event — ' +
+      'it may belong to someone else, or the action may be host-only. Check the event_id, and ' +
+      'use evite_list_events with filter_by "host" to see the events you host.',
+  });
 }
 
 /**
@@ -334,7 +367,8 @@ export class EviteClient {
    * The session lifecycle (single-flight login, clear-on-settle, and the
    * exactly-one re-login-and-replay on a genuine expiry) lives in the shared
    * {@link CookieSessionManager} — `login` is the injected resolver, and
-   * `isExpired` flags a 401/403 as a true session expiry (the re-login trigger).
+   * `isExpired` flags a 401 — or a 403 that {@link classify403} judges to be a
+   * dead session rather than a refusal — as a true expiry (the re-login trigger).
    * The CSRF-rotation tier stays evite-local in {@link write} (see there).
    */
   private readonly sessions: CookieSessionManager<ResolvedSession>;
@@ -347,13 +381,97 @@ export class EviteClient {
       // unlike the jar-based repos in this rollout it persists as-is.
       persistence: createSessionCache() ?? undefined,
       onPersistError: reportCacheWriteFailure,
-      // A 401/403 is a genuine session expiry → re-login + one replay. EXCEPTION:
+      // A 401 (or an expired-session 403) → re-login + one replay. EXCEPTION:
       // a response {@link write} already recovered from via a rotated-CSRF replay
       // is tagged ({@link CSRF_RECOVERED}) and treated as NOT expired, so the
       // manager never re-logs-in on top of an evite-local CSRF retry (recovery
       // stays capped at one step). Reads/HTML never carry the tag.
-      isExpired: (res) => (res.status === 401 || res.status === 403) && !isCsrfRecovered(res),
+      //
+      // A 403 is only an expiry when it is not a plain permission refusal (see
+      // {@link classify403}): a live session that may not touch this event must
+      // not cost a password re-login per call (fleet-audit #100).
+      isExpired: async (res) => {
+        if (isCsrfRecovered(res)) return false;
+        if (res.status === 401) return true;
+        return res.status === 403 && (await this.classify403(res, true)) === 'expired';
+      },
+      // Evite rejecting the email/password outright can never succeed on a retry
+      // without new config — cache it rather than re-POST a known-bad password.
+      isPermanentError: (err) => err instanceof InvalidCredentialsError,
+      // A failed replay re-login normally surfaces as the stale response's
+      // "go sign in". Surface the actionable causes instead.
+      onReplayLoginError: (err) => {
+        if (
+          err instanceof InvalidCredentialsError ||
+          err instanceof RateLimitError ||
+          err instanceof UnreachableError
+        ) {
+          throw err;
+        }
+      },
     });
+  }
+
+  /** Classification cache: a response is classified at most once. */
+  private readonly forbiddenKinds = new WeakMap<Response, ForbiddenKind>();
+
+  /**
+   * Decide whether a 403 means an expired session or a refusal on a live one.
+   * A body naming authentication → expired. Otherwise, when {@link probe} is set,
+   * re-check the SAME session with {@link SESSION_PROBE_PATH}: a 401/403 there (or
+   * a probe that cannot complete) → expired, anything else → forbidden. Without a
+   * probe an unexplained 403 is forbidden — that is the case of a 403 surviving a
+   * fresh re-login or a fresh-CSRF replay, where the session is known-good.
+   */
+  private async classify403(res: Response, probe: boolean): Promise<ForbiddenKind> {
+    const cached = this.forbiddenKinds.get(res);
+    if (cached) return cached;
+    const body = await res
+      .clone()
+      .text()
+      .catch(() => '');
+    let kind: ForbiddenKind = 'forbidden';
+    if (AUTH_403_BODY.test(body)) {
+      kind = 'expired';
+    } else if (probe) {
+      kind = await this.probeSession(this.sessions.current);
+    }
+    this.forbiddenKinds.set(res, kind);
+    return kind;
+  }
+
+  /** Whether {@link session} can still make an authenticated read (see {@link classify403}). */
+  private async probeSession(session: ResolvedSession | undefined): Promise<ForbiddenKind> {
+    /* v8 ignore next -- a 403 always follows a resolved session; defensive */
+    if (!session) return 'expired';
+    try {
+      const probe = await fetch(`${BASE_URL}${SESSION_PROBE_PATH}`, {
+        method: 'GET',
+        headers: { cookie: session.cookieHeader, accept: 'application/json' },
+      });
+      return probe.status === 401 || probe.status === 403 ? 'expired' : 'forbidden';
+    } catch {
+      return 'expired';
+    }
+  }
+
+  /**
+   * Map a final 401/403 to the right error: {@link SessionNotAuthenticatedError}
+   * for a dead session, a forbidden {@link McpToolError} for a refusal on a live
+   * one. Returns normally for any other status.
+   */
+  private async throwIfAuthFailure(
+    res: Response,
+    method: string,
+    path: string,
+    probe = false,
+  ): Promise<void> {
+    if (res.status === 401) throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    if (res.status !== 403) return;
+    if ((await this.classify403(res, probe)) === 'expired') {
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
+    throw forbiddenError(method, path);
   }
 
   /** Report status and whether a session has been resolved yet. */
@@ -370,12 +488,13 @@ export class EviteClient {
 
   /**
    * Issue an authenticated GET. `query` (when present) is appended; `status`
-   * arrays become repeated params via {@link buildQueryString}. Maps 401/403 to
-   * {@link SessionNotAuthenticatedError}; other non-2xx through
+   * arrays become repeated params via {@link buildQueryString}. Maps a 401 / dead-
+   * session 403 to {@link SessionNotAuthenticatedError} and a refusal 403 to a
+   * forbidden {@link McpToolError} ({@link throwIfAuthFailure}); other non-2xx through
    * {@link formatApiError} (redaction + truncation — no token/body leakage).
    *
    * The manager's {@link CookieSessionManager.withSession} owns the single-flight
-   * login and the re-login-once-then-replay on a 401/403 expiry.
+   * login and the re-login-once-then-replay on an expiry.
    */
   private async get<T>(path: string, query?: Record<string, unknown>): Promise<T> {
     const qs = query ? buildQueryString(query) : '';
@@ -388,9 +507,7 @@ export class EviteClient {
       }),
     );
 
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    await this.throwIfAuthFailure(response, 'GET', path);
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new Error(formatApiError(response.status, 'GET', path, body, { service: 'Evite' }));
@@ -430,9 +547,7 @@ export class EviteClient {
       }),
     );
 
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    await this.throwIfAuthFailure(response, 'GET', path);
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new Error(formatApiError(response.status, 'GET', path, body, { service: 'Evite' }));
@@ -547,9 +662,11 @@ export class EviteClient {
     //       response as not-expired (`recovered` flips) so the manager's expiry
     //       tier does not also fire.
     //
-    //   (b) Genuine session expiry (delegated to the manager) — a 401/403 with
-    //       NO freshly-rotated token is a real expiry: the manager re-logs-in
-    //       (single-flight, cleared-on-settle) and replays the call exactly once.
+    //   (b) Genuine session expiry (delegated to the manager) — a 401, or a 403
+    //       with NO freshly-rotated token that {@link classify403} judges a dead
+    //       session: the manager re-logs-in (single-flight, cleared-on-settle)
+    //       and replays the call exactly once. A 403 on a live session (not the
+    //       host, not your event) is a refusal and is NOT re-logged-in.
     //
     // `recovered` is the per-write one-recovery budget shared across both of the
     // closure's invocations (the original call and the manager's re-login replay):
@@ -570,16 +687,15 @@ export class EviteClient {
           session.csrfToken = rotated.csrfToken;
           return markCsrfRecovered(await send(session));
         }
-        // (b) no fresh token → a genuine expiry: leave the response untagged so
-        // the manager's `isExpired` sees it, invalidates, re-logs-in, and replays
-        // this closure exactly once (where `recovered` now blocks a second tier).
+        // (b) no fresh token → leave the response untagged so the manager's
+        // `isExpired` classifies it; on a genuine expiry it invalidates,
+        // re-logs-in, and replays this closure exactly once (where `recovered`
+        // now blocks a second tier).
       }
       return res;
     });
 
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    await this.throwIfAuthFailure(response, method, path);
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       throw new EviteApiError(
@@ -1118,9 +1234,8 @@ export class EviteClient {
     if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
 
     const response = await fetch(url, { method: 'GET', headers, redirect: 'manual' });
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    // No re-login on this path, so settle an unexplained 403 with the probe.
+    await this.throwIfAuthFailure(response, 'GET', '/plus/create/{id}/copy/', true);
     const location = response.headers.get('location') ?? '';
     const match = location.match(/\/invitation\/([^/?]+)\//);
     if (!match) {

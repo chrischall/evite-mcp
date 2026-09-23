@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { EviteClient } from '../src/client.js';
-import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
+import {
+  McpToolError,
+  RateLimitError,
+  SessionNotAuthenticatedError,
+} from '@chrischall/mcp-utils';
+import { InvalidCredentialsError } from '../src/auth-login.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const loadFixture = (name: string): { response: unknown } =>
@@ -174,8 +179,8 @@ describe('EviteClient — error handling', () => {
     );
   });
 
-  it('maps 403 to SessionNotAuthenticatedError too', async () => {
-    mockFetch({ status: 403, rawBody: '' });
+  it('maps a 403 whose body says the session is not authenticated to SessionNotAuthenticatedError', async () => {
+    mockFetch({ status: 403, rawBody: '{"detail":"Authentication credentials were not provided."}' });
     const client = newClient();
     await expect(client.getEvent('X')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
@@ -340,5 +345,143 @@ describe('EviteClient — getHtml / write error paths', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       ({ status: 500, ok: false, text: async () => { throw new Error('broke'); } } as unknown as Response));
     await expect(newClient().rsvp('E', 'G', { response: 'yes' })).rejects.toThrow(/Evite error 500/);
+  });
+});
+
+// fleet-audit #100: a 403 is not automatically an expired session. Evite also
+// 403s a perfectly valid session that simply may not touch this event (not the
+// host, someone else's event). Treating every 403 as expiry cost a full
+// password login per call and then told the user to "go sign in".
+describe('EviteClient — 403: forbidden vs expired', () => {
+  const DENIED = '{"detail":"You do not have permission to perform this action."}';
+  const NOT_AUTHED = '{"detail":"Authentication credentials were not provided."}';
+
+  it('a 403 on a still-valid session is reported as forbidden, with no re-login', async () => {
+    // 403 on the call; the session probe (a cheap authenticated list) is fine.
+    const spy = mockFetch({ status: 403, rawBody: DENIED }, { body: eventsList });
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+
+    const err = await client.getEvent('SOMEONE_ELSES').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+    expect((err as Error).message).toMatch(/403|refused|access/i);
+    expect((err as { hint?: string }).hint).toMatch(/host|access/i);
+    expect(resolver).toHaveBeenCalledTimes(1); // no password re-login
+    // The probe carried the same session cookie and hit the events list.
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(String(spy.mock.calls[1]![0])).toContain('/services/events/v1/');
+    expect((spy.mock.calls[1]![1] as RequestInit & { headers: Record<string, string> }).headers.cookie).toBe(
+      fakeSession.cookieHeader,
+    );
+  });
+
+  it('an ambiguous 403 body is settled by the probe: probe also 403 → expired → one re-login + replay', async () => {
+    const spy = mockFetch(
+      { status: 403, rawBody: '{"error":"HTTP_403"}' },
+      { status: 403, rawBody: '{"error":"HTTP_403"}' }, // probe: session is dead
+      { body: eventDetail }, // replay after re-login
+    );
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+    await expect(client.getEvent('X')).resolves.toEqual(eventDetail);
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('a 403 whose body names authentication re-logs-in without probing', async () => {
+    const spy = mockFetch({ status: 403, rawBody: NOT_AUTHED }, { body: eventDetail });
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+    await expect(client.getEvent('X')).resolves.toEqual(eventDetail);
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('a 403 that survives a fresh re-login is forbidden, not "go sign in"', async () => {
+    mockFetch(
+      { status: 403, rawBody: '' },
+      { status: 403, rawBody: '' }, // probe: looked dead, so re-login
+      { status: 403, rawBody: '' }, // replay with the FRESH session still 403s
+    );
+    const err = await newClient().getEvent('X').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
+  it('treats a probe that cannot complete as expiry (the old, safe behaviour)', async () => {
+    let n = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      n++;
+      if (n === 1) return new Response('', { status: 403 });
+      if (n === 2) throw new Error('network down'); // the probe
+      return new Response(JSON.stringify(eventDetail), { status: 200 });
+    });
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+    await expect(client.getEvent('X')).resolves.toEqual(eventDetail);
+    expect(resolver).toHaveBeenCalledTimes(2);
+  });
+
+  it('an unreadable 403 body falls through to the probe', async () => {
+    let n = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      n++;
+      if (n === 1) {
+        return {
+          status: 403,
+          ok: false,
+          clone: () => ({ text: () => Promise.reject(new Error('stream broken')) }),
+        } as unknown as Response;
+      }
+      return new Response(JSON.stringify(eventsList), { status: 200 }); // probe: alive
+    });
+    const err = await newClient().getEvent('X').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(n).toBe(2);
+  });
+
+  it('getHtml (template gallery) applies the same forbidden mapping', async () => {
+    mockFetch({ status: 403, rawBody: DENIED }, { body: eventsList });
+    const err = await newClient().listTemplates('birthday').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+});
+
+describe('EviteClient — login failure handling', () => {
+  it('caches a rejected-credentials login: later calls do not re-POST the password', async () => {
+    const fetchSpy = mockFetch({ body: eventsList });
+    const resolver = vi.fn(async (): Promise<typeof fakeSession> => {
+      throw new InvalidCredentialsError();
+    });
+    const client = new EviteClient({ resolveSession: resolver });
+    await expect(client.listEvents({ filterBy: 'all', status: ['past'] })).rejects.toBeInstanceOf(
+      InvalidCredentialsError,
+    );
+    await expect(client.getEvent('X')).rejects.toBeInstanceOf(InvalidCredentialsError);
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a rate-limited re-login as RateLimitError rather than "go sign in"', async () => {
+    mockFetch({ status: 401, rawBody: '' });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockResolvedValueOnce(fakeSession)
+      .mockRejectedValueOnce(new RateLimitError('Evite', 60));
+    const client = new EviteClient({ resolveSession: resolver });
+    await expect(client.getEvent('X')).rejects.toBeInstanceOf(RateLimitError);
+  });
+
+  it('still reports a plain failed re-login (no creds) as the sign-in error', async () => {
+    mockFetch({ status: 401, rawBody: '' });
+    const resolver = vi
+      .fn<() => Promise<typeof fakeSession>>()
+      .mockResolvedValueOnce(fakeSession)
+      .mockRejectedValueOnce(new Error('bridge offline'));
+    const client = new EviteClient({ resolveSession: resolver });
+    await expect(client.getEvent('X')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
 });

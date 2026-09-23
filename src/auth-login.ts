@@ -27,7 +27,12 @@
 // (`getSetCookie()` preferred, joined-header split fallback, deletion markers
 // dropped). The password is NEVER echoed in errors.
 
-import { CookieJar, SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
+import {
+  CookieJar,
+  RateLimitError,
+  SessionNotAuthenticatedError,
+  UnreachableError,
+} from '@chrischall/mcp-utils';
 
 /** Evite origin + endpoints. */
 const ORIGIN = 'https://www.evite.com';
@@ -60,15 +65,39 @@ export interface PasswordLoginResult {
   csrfToken?: string;
 }
 
+/** The hint for a failed login — points the user at the credential env vars. */
+const BAD_CREDENTIALS_HINT =
+  'Login to Evite failed. Check EVITE_EMAIL / EVITE_PASSWORD, or set EVITE_SESSION_COOKIE / use the fetchproxy browser bridge instead.';
+
+/**
+ * Evite rejected the email/password outright (`401 "Invalid Email Address /
+ * Password"`). Unlike every other login failure this can never succeed on a
+ * retry without new configuration, so the session manager caches it as a
+ * PERMANENT error — the server stops re-POSTing a known-bad password (which
+ * risks captcha / account lockout) until it is restarted with new env vars.
+ */
+export class InvalidCredentialsError extends SessionNotAuthenticatedError {
+  constructor() {
+    super('Evite', ORIGIN);
+    this.name = 'InvalidCredentialsError';
+    (this as { hint?: string }).hint = BAD_CREDENTIALS_HINT;
+  }
+}
+
 /**
  * Throw a "go authenticate" error pointing the user at the credential env vars.
  * The password is never interpolated.
  */
 function badCredentials(): never {
   const err = new SessionNotAuthenticatedError('Evite', ORIGIN);
-  (err as { hint?: string }).hint =
-    'Login to Evite failed. Check EVITE_EMAIL / EVITE_PASSWORD, or set EVITE_SESSION_COOKIE / use the fetchproxy browser bridge instead.';
+  (err as { hint?: string }).hint = BAD_CREDENTIALS_HINT;
   throw err;
+}
+
+/** Seconds from a `Retry-After` header given as delta-seconds, when usable. */
+function retryAfterSeconds(response: Response): number | undefined {
+  const n = Number.parseInt(response.headers.get('retry-after') ?? '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /**
@@ -132,6 +161,12 @@ export async function loginWithPassword(
     badCredentials();
   }
 
+  // Only a 401 means the credentials are wrong. A 429 / 5xx is Evite being busy
+  // or down — naming EVITE_PASSWORD for those would send the user after the
+  // wrong problem (fleet-audit #100).
+  if (response.status === 401) throw new InvalidCredentialsError();
+  if (response.status === 429) throw new RateLimitError('Evite', retryAfterSeconds(response));
+  if (response.status >= 500) throw new UnreachableError('Evite', response.status);
   if (!response.ok) badCredentials();
 
   // ── 3. Build the authenticated session from the LOGIN response's Set-Cookie

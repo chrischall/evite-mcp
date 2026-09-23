@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { loginWithPassword } from '../src/auth-login.js';
-import { SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
+import { InvalidCredentialsError, loginWithPassword } from '../src/auth-login.js';
+import { RateLimitError, SessionNotAuthenticatedError, UnreachableError } from '@chrischall/mcp-utils';
 
 // A minimal `Response`-like stub good enough for loginWithPassword: it needs
 // `ok`, `status`, and `headers.getSetCookie()`. We never hit the network — a
@@ -187,5 +187,63 @@ describe('loginWithPassword — error & parser branches', () => {
       return fakeResponse({ ok: true, status: 200, setCookies: ['csrftoken=prime-csrf; Path=/'] });
     });
     await expect(loginWithPassword('u@e.com', 'pw', fetchImpl)).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+});
+
+// fleet-audit #100: only a 401 from /ajax_login means the credentials are wrong.
+// A 429 or a 5xx is Evite being busy/down — telling the user to "check
+// EVITE_EMAIL / EVITE_PASSWORD" for those sends them after the wrong problem.
+describe('loginWithPassword — failure classification', () => {
+  const postReturning = (res: Response) =>
+    vi.fn(async (_u: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? res
+        : fakeResponse({ ok: true, status: 200, setCookies: ['csrftoken=prime-csrf; Path=/'] }),
+    );
+
+  it('marks a 401 as InvalidCredentialsError (a SessionNotAuthenticatedError naming the env vars)', async () => {
+    const err = await loginWithPassword('u@e.com', 'pw', twoPhase({ login: { ok: false, status: 401 } })).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(InvalidCredentialsError);
+    expect(err).toBeInstanceOf(SessionNotAuthenticatedError);
+    expect((err as { hint?: string }).hint).toMatch(/EVITE_EMAIL/);
+  });
+
+  it('maps a 429 to RateLimitError (with Retry-After), not a credentials error', async () => {
+    const err = await loginWithPassword(
+      'u@e.com',
+      'pw',
+      postReturning(new Response('slow down', { status: 429, headers: { 'retry-after': '120' } })),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RateLimitError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+    expect((err as RateLimitError).retryAfterSeconds).toBe(120);
+    expect(String((err as Error).message) + String((err as { hint?: string }).hint)).not.toMatch(/EVITE_PASSWORD/);
+  });
+
+  it('maps a 429 without a usable Retry-After to a plain RateLimitError', async () => {
+    const err = await loginWithPassword('u@e.com', 'pw', postReturning(new Response('', { status: 429 }))).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(RateLimitError);
+    expect((err as RateLimitError).retryAfterSeconds).toBeUndefined();
+  });
+
+  it('keeps any other rejection (e.g. a CSRF 403) a retryable sign-in error, not a cached bad-credentials one', async () => {
+    const err = await loginWithPassword('u@e.com', 'pw', postReturning(new Response('', { status: 403 }))).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(err).not.toBeInstanceOf(InvalidCredentialsError);
+  });
+
+  it('maps a 5xx to UnreachableError, not a credentials error', async () => {
+    const err = await loginWithPassword('u@e.com', 'pw', postReturning(new Response('', { status: 503 }))).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(UnreachableError);
+    expect((err as UnreachableError).status).toBe(503);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
   });
 });

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/chrischall/evite-mcp/compare/v1.1.1...v1.1.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* **deps:** require zod ^4.6.5 to match @chrischall/mcp-utils 2.4.0 ([#160](https://github.com/chrischall/evite-mcp/issues/160)) ([a1c510c](https://github.com/chrischall/evite-mcp/commit/a1c510c18456e009219ca8112a1fd3a7639f4db4))
+* **deps:** upgrade @chrischall/mcp-utils to 2.4.0 and @fetchproxy/* to 3.2.0 ([#158](https://github.com/chrischall/evite-mcp/issues/158)) ([96f766c](https://github.com/chrischall/evite-mcp/commit/96f766c9a533c1c54457bb919445ce52a8f9238f))
+
 ## [1.1.1](https://github.com/chrischall/evite-mcp/compare/v1.1.0...v1.1.1) (2026-09-21)
 
 

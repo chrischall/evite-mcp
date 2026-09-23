@@ -1,7 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { minifiedResult, schemaConfirm, toolAnnotations } from '@chrischall/mcp-utils';
-import type { EviteClient } from '../client.js';
+import { statSync } from 'node:fs';
+import { resolveUploadPath, type EviteClient } from '../client.js';
+import { IMAGE_MIMETYPES } from '../image-meta.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Confirm-gated write tools.
@@ -84,9 +86,11 @@ const uploadPhotoArgs = z.object({
     .min(1)
     .describe('Path to the local image file to upload (a leading ~ is expanded). JPEG/PNG/GIF/WebP/HEIC, max 20 MB.'),
   mimetype: z
-    .string()
+    .enum(IMAGE_MIMETYPES)
     .optional()
-    .describe('Override the image mimetype (otherwise inferred from the file extension).'),
+    .describe(
+      'Override the image mimetype (otherwise inferred from the file). Must match the file contents.',
+    ),
   confirm: schemaConfirm,
 });
 
@@ -242,10 +246,21 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     },
     async (args) => {
       if (args.confirm !== true) {
+        // Show exactly which file would be read, so the confirm decision is made
+        // on the resolved absolute path and size rather than a relative/~ string.
+        const resolved = resolveUploadPath(args.path);
+        let size: number | undefined;
+        try {
+          size = statSync(resolved).size;
+        } catch {
+          size = undefined;
+        }
         return preview('upload_photo', {
           event_id: args.event_id,
           guest_id: args.guest_id,
           path: args.path,
+          resolved_path: resolved,
+          size_bytes: size,
           mimetype: args.mimetype,
         });
       }
@@ -264,8 +279,9 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Create an Evite event (as a draft). Requires title, start_datetime, and template_name. ' +
         'Confirm-gated: without confirm:true this returns a dry-run preview and sends nothing. ' +
-        'NOTE: the create API returns a 500 even when it succeeds (the draft is created), so this ' +
-        'call may throw though the event exists — re-list drafts rather than retrying.',
+        'Evite answers a create with a 500 even when the draft IS created; this tool handles that ' +
+        'by re-listing your drafts, and returns created:true with the eventId, or created:"unknown" ' +
+        'when it cannot confirm — never call it again for the same event; check the drafts instead.',
       annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false, destructive: false }),
       inputSchema: createEventArgs,
     },
@@ -280,7 +296,8 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
             end_datetime: args.end_datetime,
             message: args.message,
           },
-          'Create returns a 500 even on success (the draft IS created) — re-list drafts to confirm.',
+          'Evite answers a create with a 500 even on success; the tool confirms the new draft ' +
+            'itself, so run it once and do not retry.',
         );
       }
       const data = await client.createEvent({

@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import {
   buildQueryString,
   CookieJar,
@@ -7,20 +7,33 @@ import {
   formatApiError,
   McpToolError,
   parseCookieHeader,
+  RateLimitError,
   readFileHead,
   SessionNotAuthenticatedError,
+  UnreachableError,
 } from '@chrischall/mcp-utils';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
-import { mimetypeForPath, imageDimensions } from './image-meta.js';
+import { InvalidCredentialsError } from './auth-login.js';
+import {
+  IMAGE_MIMETYPES,
+  imageDimensions,
+  mimetypeForPath,
+  sameImageType,
+  sniffImageMime,
+} from './image-meta.js';
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 
 /** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
 const MAX_UPLOAD_BYTES = 20_000_000;
 
-/** Expand a leading `~` to the home directory (the only shell expansion we do). */
-function expandHome(p: string): string {
-  return p === '~' || p.startsWith('~/') ? homedir() + p.slice(1) : p;
+/**
+ * Resolve an upload path to an absolute one: expand a leading `~` to the home
+ * directory (the only shell expansion we do), then resolve against the cwd.
+ * Shared with the upload tool's preview so it shows exactly what would be read.
+ */
+export function resolveUploadPath(p: string): string {
+  return resolve(p === '~' || p.startsWith('~/') ? homedir() + p.slice(1) : p);
 }
 
 /** The session-resolver signature the client depends on (injectable in tests). */
@@ -50,6 +63,36 @@ function markCsrfRecovered(res: Response): Response {
 /** Whether a response was tagged as CSRF-recovered by {@link markCsrfRecovered}. */
 function isCsrfRecovered(res: Response): boolean {
   return (res as Response & { [CSRF_RECOVERED]?: boolean })[CSRF_RECOVERED] === true;
+}
+
+/**
+ * What a 403 means. Evite 403s BOTH a dead session and a live one that simply
+ * may not touch this resource (someone else's event, a host-only action by a
+ * guest). Only the first warrants a password re-login (fleet-audit #100).
+ */
+type ForbiddenKind = 'expired' | 'forbidden';
+
+/**
+ * A 403 body that names authentication (DRF's "Authentication credentials were
+ * not provided.", a CSRF failure, a login redirect page, …) — i.e. the session,
+ * not the permission, is the problem.
+ */
+const AUTH_403_BODY = /csrf|authenticat|credential|log\s*-?in|sign\s*-?in|session|expired/i;
+
+/**
+ * A cheap authenticated read used to settle an ambiguous 403: if the same
+ * session can still list its events, it is alive and the 403 is a refusal.
+ */
+const SESSION_PROBE_PATH = '/services/events/v1/?filterBy=all&status=upcoming&type=invitation&numResults=1';
+
+/** The error for a 403 on a session that is still valid. */
+function forbiddenError(method: string, path: string): McpToolError {
+  return new McpToolError(`Evite refused ${method} ${path} (403 Forbidden).`, {
+    hint:
+      'Your Evite session is valid, but this account may not have access to that event — ' +
+      'it may belong to someone else, or the action may be host-only. Check the event_id, and ' +
+      'use evite_list_events with filter_by "host" to see the events you host.',
+  });
 }
 
 /**
@@ -96,6 +139,28 @@ export function withFreshCsrf(session: ResolvedSession, token: string): Resolved
  * cached. The header NAME is stable; only the value rotates.
  */
 export const CSRF_HEADER = 'X-CSRFToken';
+
+/**
+ * A non-2xx answer from an Evite write, carrying the HTTP status so a caller can
+ * tell failure modes apart (e.g. {@link EviteClient.createEvent}'s 500-on-success).
+ * The message is the shared {@link formatApiError} text (redacted + truncated).
+ */
+export class EviteApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EviteApiError';
+  }
+}
+
+/**
+ * How far back (by the list's `updated` stamp) a same-title draft may be and
+ * still count as the one a 500'd create just made. Generous, to absorb clock
+ * skew between this machine and Evite.
+ */
+const CREATE_RECOVERY_WINDOW_MS = 5 * 60_000;
 
 /** Health report surfaced by the `evite_healthcheck` tool. */
 export interface EviteHealth {
@@ -302,7 +367,8 @@ export class EviteClient {
    * The session lifecycle (single-flight login, clear-on-settle, and the
    * exactly-one re-login-and-replay on a genuine expiry) lives in the shared
    * {@link CookieSessionManager} — `login` is the injected resolver, and
-   * `isExpired` flags a 401/403 as a true session expiry (the re-login trigger).
+   * `isExpired` flags a 401 — or a 403 that {@link classify403} judges to be a
+   * dead session rather than a refusal — as a true expiry (the re-login trigger).
    * The CSRF-rotation tier stays evite-local in {@link write} (see there).
    */
   private readonly sessions: CookieSessionManager<ResolvedSession>;
@@ -315,13 +381,97 @@ export class EviteClient {
       // unlike the jar-based repos in this rollout it persists as-is.
       persistence: createSessionCache() ?? undefined,
       onPersistError: reportCacheWriteFailure,
-      // A 401/403 is a genuine session expiry → re-login + one replay. EXCEPTION:
+      // A 401 (or an expired-session 403) → re-login + one replay. EXCEPTION:
       // a response {@link write} already recovered from via a rotated-CSRF replay
       // is tagged ({@link CSRF_RECOVERED}) and treated as NOT expired, so the
       // manager never re-logs-in on top of an evite-local CSRF retry (recovery
       // stays capped at one step). Reads/HTML never carry the tag.
-      isExpired: (res) => (res.status === 401 || res.status === 403) && !isCsrfRecovered(res),
+      //
+      // A 403 is only an expiry when it is not a plain permission refusal (see
+      // {@link classify403}): a live session that may not touch this event must
+      // not cost a password re-login per call (fleet-audit #100).
+      isExpired: async (res) => {
+        if (isCsrfRecovered(res)) return false;
+        if (res.status === 401) return true;
+        return res.status === 403 && (await this.classify403(res, true)) === 'expired';
+      },
+      // Evite rejecting the email/password outright can never succeed on a retry
+      // without new config — cache it rather than re-POST a known-bad password.
+      isPermanentError: (err) => err instanceof InvalidCredentialsError,
+      // A failed replay re-login normally surfaces as the stale response's
+      // "go sign in". Surface the actionable causes instead.
+      onReplayLoginError: (err) => {
+        if (
+          err instanceof InvalidCredentialsError ||
+          err instanceof RateLimitError ||
+          err instanceof UnreachableError
+        ) {
+          throw err;
+        }
+      },
     });
+  }
+
+  /** Classification cache: a response is classified at most once. */
+  private readonly forbiddenKinds = new WeakMap<Response, ForbiddenKind>();
+
+  /**
+   * Decide whether a 403 means an expired session or a refusal on a live one.
+   * A body naming authentication → expired. Otherwise, when {@link probe} is set,
+   * re-check the SAME session with {@link SESSION_PROBE_PATH}: a 401/403 there (or
+   * a probe that cannot complete) → expired, anything else → forbidden. Without a
+   * probe an unexplained 403 is forbidden — that is the case of a 403 surviving a
+   * fresh re-login or a fresh-CSRF replay, where the session is known-good.
+   */
+  private async classify403(res: Response, probe: boolean): Promise<ForbiddenKind> {
+    const cached = this.forbiddenKinds.get(res);
+    if (cached) return cached;
+    const body = await res
+      .clone()
+      .text()
+      .catch(() => '');
+    let kind: ForbiddenKind = 'forbidden';
+    if (AUTH_403_BODY.test(body)) {
+      kind = 'expired';
+    } else if (probe) {
+      kind = await this.probeSession(this.sessions.current);
+    }
+    this.forbiddenKinds.set(res, kind);
+    return kind;
+  }
+
+  /** Whether {@link session} can still make an authenticated read (see {@link classify403}). */
+  private async probeSession(session: ResolvedSession | undefined): Promise<ForbiddenKind> {
+    /* v8 ignore next -- a 403 always follows a resolved session; defensive */
+    if (!session) return 'expired';
+    try {
+      const probe = await fetch(`${BASE_URL}${SESSION_PROBE_PATH}`, {
+        method: 'GET',
+        headers: { cookie: session.cookieHeader, accept: 'application/json' },
+      });
+      return probe.status === 401 || probe.status === 403 ? 'expired' : 'forbidden';
+    } catch {
+      return 'expired';
+    }
+  }
+
+  /**
+   * Map a final 401/403 to the right error: {@link SessionNotAuthenticatedError}
+   * for a dead session, a forbidden {@link McpToolError} for a refusal on a live
+   * one. Returns normally for any other status.
+   */
+  private async throwIfAuthFailure(
+    res: Response,
+    method: string,
+    path: string,
+    probe = false,
+  ): Promise<void> {
+    if (res.status === 401) throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    if (res.status !== 403) return;
+    if ((await this.classify403(res, probe)) === 'expired') {
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
+    throw forbiddenError(method, path);
   }
 
   /** Report status and whether a session has been resolved yet. */
@@ -338,12 +488,13 @@ export class EviteClient {
 
   /**
    * Issue an authenticated GET. `query` (when present) is appended; `status`
-   * arrays become repeated params via {@link buildQueryString}. Maps 401/403 to
-   * {@link SessionNotAuthenticatedError}; other non-2xx through
+   * arrays become repeated params via {@link buildQueryString}. Maps a 401 / dead-
+   * session 403 to {@link SessionNotAuthenticatedError} and a refusal 403 to a
+   * forbidden {@link McpToolError} ({@link throwIfAuthFailure}); other non-2xx through
    * {@link formatApiError} (redaction + truncation — no token/body leakage).
    *
    * The manager's {@link CookieSessionManager.withSession} owns the single-flight
-   * login and the re-login-once-then-replay on a 401/403 expiry.
+   * login and the re-login-once-then-replay on an expiry.
    */
   private async get<T>(path: string, query?: Record<string, unknown>): Promise<T> {
     const qs = query ? buildQueryString(query) : '';
@@ -356,9 +507,7 @@ export class EviteClient {
       }),
     );
 
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    await this.throwIfAuthFailure(response, 'GET', path);
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new Error(formatApiError(response.status, 'GET', path, body, { service: 'Evite' }));
@@ -398,9 +547,7 @@ export class EviteClient {
       }),
     );
 
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    await this.throwIfAuthFailure(response, 'GET', path);
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new Error(formatApiError(response.status, 'GET', path, body, { service: 'Evite' }));
@@ -515,9 +662,11 @@ export class EviteClient {
     //       response as not-expired (`recovered` flips) so the manager's expiry
     //       tier does not also fire.
     //
-    //   (b) Genuine session expiry (delegated to the manager) — a 401/403 with
-    //       NO freshly-rotated token is a real expiry: the manager re-logs-in
-    //       (single-flight, cleared-on-settle) and replays the call exactly once.
+    //   (b) Genuine session expiry (delegated to the manager) — a 401, or a 403
+    //       with NO freshly-rotated token that {@link classify403} judges a dead
+    //       session: the manager re-logs-in (single-flight, cleared-on-settle)
+    //       and replays the call exactly once. A 403 on a live session (not the
+    //       host, not your event) is a refusal and is NOT re-logged-in.
     //
     // `recovered` is the per-write one-recovery budget shared across both of the
     // closure's invocations (the original call and the manager's re-login replay):
@@ -538,19 +687,21 @@ export class EviteClient {
           session.csrfToken = rotated.csrfToken;
           return markCsrfRecovered(await send(session));
         }
-        // (b) no fresh token → a genuine expiry: leave the response untagged so
-        // the manager's `isExpired` sees it, invalidates, re-logs-in, and replays
-        // this closure exactly once (where `recovered` now blocks a second tier).
+        // (b) no fresh token → leave the response untagged so the manager's
+        // `isExpired` classifies it; on a genuine expiry it invalidates,
+        // re-logs-in, and replays this closure exactly once (where `recovered`
+        // now blocks a second tier).
       }
       return res;
     });
 
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    await this.throwIfAuthFailure(response, method, path);
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(formatApiError(response.status, method, path, text, { service: 'Evite' }));
+      throw new EviteApiError(
+        response.status,
+        formatApiError(response.status, method, path, text, { service: 'Evite' }),
+      );
     }
 
     return (await response.json().catch(() => ({}))) as T;
@@ -766,27 +917,49 @@ export class EviteClient {
    * mimetype declared in step 1 must match the Blob's type in step 2.
    */
   async uploadPhoto(eventId: string, input: UploadPhotoInput): Promise<UploadPhotoResult> {
-    const abs = expandHome(input.path);
-    const mimetype = input.mimetype ?? mimetypeForPath(abs);
-    if (!mimetype) {
-      throw new Error(
-        `Unknown image type for "${input.path}" — use a .jpg/.png/.gif/.webp/.heic file or pass mimetype.`,
-      );
+    const abs = resolveUploadPath(input.path);
+    // SECURITY (fleet-audit #102): the path comes from the model, and guest-authored
+    // content (messages, RSVP notes) reaches the model verbatim — a prompt-injection
+    // channel. So the only thing trusted is the file's own bytes: whatever the
+    // extension or a declared mimetype says, the header must identify a supported
+    // image, and a declared type must agree with it. An SSH key or a session file
+    // can never be shipped to a guest-visible gallery.
+    if (input.mimetype !== undefined && !IMAGE_MIMETYPES.includes(input.mimetype)) {
+      throw new McpToolError(`Unsupported mimetype "${input.mimetype}".`, {
+        hint: `Use one of ${IMAGE_MIMETYPES.join(', ')} (or omit it to infer from the file).`,
+      });
     }
     // A FILE-BACKED Blob: `fetch` streams the bytes off disk as it sends the
     // multipart body, so a 20 MB photo never becomes a 20 MB Buffer in memory.
     // Both file operations live in one try so any read-time I/O error (the
     // file vanishing between awaits, EACCES, …) surfaces as the friendly
-    // message rather than a raw Node error. Dimensions need only the header,
-    // so readFileHead pulls just the first 64 KB off disk.
-    let blob: Blob;
+    // message rather than a raw Node error. The type sniff and the dimensions
+    // need only the header, so readFileHead pulls just the first 64 KB off disk.
+    // Nothing leaves the machine until every check below has passed.
     let head: Buffer;
+    let blob: Blob;
     try {
-      blob = await fileBlob(abs, { type: mimetype });
       head = await readFileHead(abs, 65_536);
+      blob = await fileBlob(abs);
     } catch {
       throw new Error(`Cannot read image file: ${input.path}`);
     }
+    const sniffed = sniffImageMime(head);
+    if (!sniffed) {
+      throw new McpToolError(`Refusing to upload "${input.path}": its contents are not an image.`, {
+        hint: 'Only JPEG, PNG, GIF, WebP and HEIC/HEIF image files can be uploaded to an event album.',
+      });
+    }
+    const mimetype = input.mimetype ?? mimetypeForPath(abs) ?? sniffed;
+    if (!sameImageType(mimetype, sniffed)) {
+      throw new McpToolError(
+        `Refusing to upload "${input.path}": it is declared ${mimetype} but its contents are ${sniffed}.`,
+        { hint: `Omit mimetype (or pass ${sniffed}), or rename the file to match its format.` },
+      );
+    }
+    // The GCS policy enforces Content-Type == mimetype, so the uploaded Blob must
+    // carry the type declared in step 1 (a zero-copy re-type of the same file).
+    blob = blob.slice(0, blob.size, mimetype);
     if (blob.size > MAX_UPLOAD_BYTES) {
       throw new Error(
         `Image is ${blob.size} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
@@ -938,12 +1111,64 @@ export class EviteClient {
    * VERIFIED (live probe 2026-06-01) — with caveat: this request DID create a
    * draft event (it appeared in My Events as a `draft`). BUT the API returns
    * `500 "Unknown error"` even on that success (a secondary post-create step
-   * fails), so {@link write} will THROW despite the event existing. Until that's
-   * understood, treat a 500 from this call as "possibly created" — re-query the
-   * draft list rather than retrying blindly. See issue #3.
+   * fails). Throwing on that 500 invited a retry, and every retry minted another
+   * draft (fleet-audit #101). So a 500 is resolved here instead: re-list the
+   * host's drafts and return the fresh one with the same title as created; when
+   * none can be confirmed, return a `created: 'unknown'` result telling the
+   * caller to check the drafts — never an error, so nothing retries blindly.
+   * Any other failure still throws (nothing was created).
    */
   async createEvent(input: CreateEventInput): Promise<unknown> {
-    return this.write('POST', '/services/event/v1/', { event: { ...input } });
+    const startedAt = Date.now();
+    try {
+      return await this.write('POST', '/services/event/v1/', { event: { ...input } });
+    } catch (err) {
+      if (!(err instanceof EviteApiError) || err.status !== 500) throw err;
+    }
+
+    const draft = await this.findFreshDraft(input.title, startedAt).catch(() => undefined);
+    if (draft) {
+      return {
+        created: true,
+        eventId: draft.event_id,
+        event: draft,
+        note:
+          'Evite answered the create with a 500, but the draft was created (found in your drafts). ' +
+          'Do not create it again.',
+      };
+    }
+    return {
+      created: 'unknown',
+      note:
+        'Evite answered the create with a 500, which it also does when the draft WAS created, and ' +
+        'the new draft could not be confirmed. Do not retry: check evite_list_events with status ' +
+        '"draft" first — retrying may create a duplicate.',
+    };
+  }
+
+  /**
+   * The newest of the host's drafts titled {@link title} whose `updated` stamp is
+   * within {@link CREATE_RECOVERY_WINDOW_MS} of {@link since} (a draft with no
+   * stamp is accepted on its title alone). Used by {@link createEvent}.
+   */
+  private async findFreshDraft(
+    title: string,
+    since: number,
+  ): Promise<{ event_id: string; updated?: string; [key: string]: unknown } | undefined> {
+    const { events } = await this.listEvents({ filterBy: 'host', status: ['draft'], numResults: 50 });
+    const stamp = (e: { updated?: string }): number => Date.parse(e.updated ?? '');
+    // Newest first; an unstamped draft ranks as oldest.
+    const rank = (e: { updated?: string }): number => stamp(e) || 0;
+    const candidates = (events as Array<{ event_id?: string; title?: string; updated?: string }>)
+      .filter((e): e is { event_id: string; title: string; updated?: string } =>
+        Boolean(e.event_id) && e.title === title,
+      )
+      .filter((e) => {
+        const t = stamp(e);
+        return Number.isNaN(t) || t >= since - CREATE_RECOVERY_WINDOW_MS;
+      })
+      .sort((a, b) => rank(b) - rank(a));
+    return candidates[0];
   }
 
   /**
@@ -1009,9 +1234,8 @@ export class EviteClient {
     if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
 
     const response = await fetch(url, { method: 'GET', headers, redirect: 'manual' });
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
-    }
+    // No re-login on this path, so settle an unexplained 403 with the probe.
+    await this.throwIfAuthFailure(response, 'GET', '/plus/create/{id}/copy/', true);
     const location = response.headers.get('location') ?? '';
     const match = location.match(/\/invitation\/([^/?]+)\//);
     if (!match) {

@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import type { EviteClient } from '../src/client.js';
 import { registerWriteTools } from '../src/tools/writes.js';
@@ -236,6 +239,47 @@ describe('evite_upload_photo', () => {
     const text = res.content[0]!.text as string;
     expect(text).toMatch(/preview/i);
     expect(text).toContain('cake.jpg');
+    await h.close();
+  });
+
+  it('preview shows the resolved absolute path and the file size', async () => {
+    guardFetch();
+    const dir = mkdtempSync(join(tmpdir(), 'evite-preview-'));
+    const file = join(dir, 'cake.png');
+    writeFileSync(file, Buffer.alloc(1234));
+    try {
+      const h = await harnessFor(fakeClient());
+      const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
+      const parsed = parseToolResult(res) as { wouldSend: Record<string, unknown> };
+      expect(parsed.wouldSend.resolved_path).toBe(file);
+      expect(parsed.wouldSend.size_bytes).toBe(1234);
+      // A ~ path resolves against the home directory; a missing file has no size.
+      const res2 = await h.callTool('evite_upload_photo', {
+        event_id: 'E',
+        guest_id: 'G',
+        path: '~/evite-mcp-no-such-file.png',
+      });
+      const parsed2 = parseToolResult(res2) as { wouldSend: Record<string, unknown> };
+      expect(parsed2.wouldSend.resolved_path).toBe(join(homedir(), 'evite-mcp-no-such-file.png'));
+      expect(parsed2.wouldSend.size_bytes).toBeUndefined();
+      await h.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a mimetype outside the supported image types at the schema', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_upload_photo', {
+      event_id: 'E',
+      guest_id: 'G',
+      path: '~/.ssh/id_ed25519',
+      mimetype: 'text/plain',
+      confirm: true,
+    });
+    expect(res.isError).toBe(true);
+    expect(client.uploadPhoto).not.toHaveBeenCalled();
     await h.close();
   });
 

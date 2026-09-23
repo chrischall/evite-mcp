@@ -8,6 +8,9 @@
 // so a 0/0 fallback for formats we don't parse is acceptable.
 // ────────────────────────────────────────────────────────────────────────────
 
+/** The 8-byte PNG file signature. */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 /** Map a file extension to an image mimetype, or `undefined` if not an image. */
 const EXT_MIME: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -18,6 +21,43 @@ const EXT_MIME: Record<string, string> = {
   heic: 'image/heic',
   heif: 'image/heif',
 };
+
+/** Every image mimetype the upload accepts (each listed once). */
+export const IMAGE_MIMETYPES = [...new Set(Object.values(EXT_MIME))] as [string, ...string[]];
+
+/** ISO-BMFF `ftyp` brands that mark a HEIC (HEVC-coded) or generic HEIF image. */
+const HEIC_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs']);
+const HEIF_BRANDS = new Set(['mif1', 'msf1']);
+
+/**
+ * Identify an image from its leading bytes (magic numbers), independent of the
+ * file name or any declared type. Returns `undefined` for anything that is not
+ * one of the supported image formats — an SSH key, a JSON session file, a
+ * `.env` — so a caller can refuse to upload non-image bytes whatever the
+ * extension or mimetype claims.
+ */
+export function sniffImageMime(buf: Buffer): string | undefined {
+  const ascii = (start: number, end: number): string => buf.toString('latin1', start, end);
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(PNG_SIGNATURE)) return 'image/png';
+  if (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a') return 'image/gif';
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+  if (ascii(4, 8) === 'ftyp') {
+    const brand = ascii(8, 12);
+    if (HEIC_BRANDS.has(brand)) return 'image/heic';
+    if (HEIF_BRANDS.has(brand)) return 'image/heif';
+  }
+  return undefined;
+}
+
+/**
+ * Whether two image mimetypes name the same format. HEIC is a HEIF profile, and
+ * Apple devices label the same file either way, so the two are one family.
+ */
+export function sameImageType(a: string, b: string): boolean {
+  const family = (m: string): string => (m === 'image/heif' ? 'image/heic' : m);
+  return family(a) === family(b);
+}
 
 /** Infer the image mimetype from a path's extension (case-insensitive). */
 export function mimetypeForPath(path: string): string | undefined {

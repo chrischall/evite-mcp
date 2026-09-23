@@ -25,7 +25,7 @@ Three auth tiers, in priority order:
 
 `src/auth-login.ts` — `loginWithPassword()`: tier-1 form login. Evite's `/ajax_login` is **Django CSRF-protected**, so a real login is two requests: (1) a priming `GET https://www.evite.com/` to obtain the `csrftoken` (+ anonymous) cookies, then (2) `POST /ajax_login` JSON `{ email, password }` carrying the full priming jar back, the `X-CSRFToken` header, and an `Origin`/`Referer`. The login response's `Set-Cookie` (read via `getSetCookie()`, with a joined-header fallback) yields the authenticated jar. The password is **never** echoed in errors. `fetchImpl` is injectable for tests.
 
-**Session lifecycle** is delegated to `@chrischall/mcp-utils/session`'s **`CookieSessionManager`** (`src/client.ts`): single-flight login, clear-on-settle, and exactly-one re-login-and-replay on a genuine 401/403 expiry. The resolver is the manager's `login`; `isExpired` flags 401/403 — *except* a response already CSRF-recovered locally (see Quirks).
+**Session lifecycle** is delegated to `@chrischall/mcp-utils/session`'s **`CookieSessionManager`** (`src/client.ts`): single-flight login, clear-on-settle, and exactly-one re-login-and-replay on a genuine expiry. The resolver is the manager's `login`; `isExpired` flags a 401, and a 403 only when it is a dead session — *except* a response already CSRF-recovered locally (see Quirks). `isPermanentError` caches a rejected email/password (`InvalidCredentialsError`, a `/ajax_login` 401) so a known-bad password is never re-POSTed; a login 429/5xx is a `RateLimitError`/`UnreachableError`, not "check your credentials".
 
 Env vars (also mirrored in `src/config.ts`): `EVITE_EMAIL`, `EVITE_PASSWORD`, `EVITE_SESSION_COOKIE`, `EVITE_DISABLE_FETCHPROXY`.
 
@@ -42,7 +42,8 @@ src/
   client.ts         EviteClient — authenticated HTTP over /services/ (+ /ajax/,
                     /tsunami/). get()/getHtml() reads, write() mutations w/ the
                     two-tier CSRF recovery, plus uploadPhoto's 4-step GCS flow.
-  image-meta.ts     mimetypeForPath() + imageDimensions() for upload_photo.
+  image-meta.ts     mimetypeForPath() + imageDimensions() + sniffImageMime()
+                    (magic-byte check: upload_photo only ships real images).
   tools/
     healthcheck.ts  registerHealthcheckTools — evite_healthcheck.
     events.ts       registerEventTools — list_events, get_event, list_templates.
@@ -102,10 +103,11 @@ All endpoints are live-verified (probe 2026-06-01/02) — see `docs/EVITE-API.md
 - **Two-tier write recovery, capped at ONE step** (never both, never a loop). On a 401/403, `write()` spends a single recovery budget (`recovered`):
   - **(a) Rotated-CSRF (evite-local):** if the 403 carried a *new* `csrftoken`, replay with it via `withFreshCsrf()` (updating the live session in place), and **tag** the replayed response (`CSRF_RECOVERED` symbol) so the manager does **not** also re-login.
   - **(b) Genuine expiry (delegated):** a 401/403 with no fresh token is left untagged; `CookieSessionManager.isExpired` sees it, re-logs-in once, and replays exactly once.
+- **A 403 is not automatically an expiry** (fleet-audit #100). Evite 403s a live session that may not touch the resource (someone else's event, a host-only action). `classify403()` treats a 403 as expired only if its body names authentication/CSRF/login, or — when the body says nothing — if a cheap probe of the same session (`GET /services/events/v1/?numResults=1`) also 401/403s. Otherwise it is a refusal: no re-login, and the caller gets a forbidden `McpToolError` ("not the host / no access"), not "go sign in". A 403 that survives a fresh re-login or a fresh-CSRF replay is a refusal too.
 - **Multi-API-base write surface (three bases):** REST `/services/…` (most writes), legacy `/ajax/event/{id}/…` (the draft guest list), and `/tsunami/…` (messaging — `send_message`, `broadcast`). `duplicate_event` hits `/plus/create/…`.
 - **`X-CSRFToken`** is the (single, centralized) header carrying the token on writes; set in `write()` only when the session resolved a token.
 - **Assumed-not-captured bodies (issue #3):** `evite_send_message` and `evite_send` endpoints are verified but their exact request **bodies** are still assumed (the observer captured the URL, not the body). `broadcast`'s body, by contrast, *was* fully captured.
-- **`create_event` returns 500 on success:** the draft IS created but a secondary post-create step 500s, so `write()` throws despite success. Re-list drafts rather than retrying blindly.
+- **`create_event` returns 500 on success:** the draft IS created but a secondary post-create step 500s. `createEvent()` catches that 500 (`EviteApiError.status`), re-lists the host's drafts, and returns `{created: true, eventId}` for the fresh same-title draft — or `{created: 'unknown'}` with a do-not-retry note. It never throws on that 500, so nothing retries into duplicate drafts (fleet-audit #101).
 - **Templates are scraped, not API:** the gallery is server-rendered; `listTemplates` regex-scrapes `/invitation/{slug}/…` links out of the category page HTML.
 - **Draft guests only persist on a finalized event** (status `sending`); on a bare new `draft` the add-guest POST 200s but drops the guest.
 

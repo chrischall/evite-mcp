@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { mimetypeForPath, imageDimensions } from '../src/image-meta.js';
+import {
+  mimetypeForPath,
+  imageDimensions,
+  sniffImageMime,
+  sameImageType,
+  IMAGE_MIMETYPES,
+} from '../src/image-meta.js';
 
 describe('mimetypeForPath', () => {
   it('maps common image extensions (case-insensitive)', () => {
@@ -102,5 +108,39 @@ describe('imageDimensions', () => {
       0xff, 0xd9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // EOI then padding, no SOF
     ]);
     expect(imageDimensions(buf, 'image/jpeg')).toEqual({ width: 0, height: 0 });
+  });
+});
+
+describe('sniffImageMime (magic bytes)', () => {
+  const ftyp = (brand: string) =>
+    Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftyp'), Buffer.from(brand), Buffer.alloc(8)]);
+  it('identifies JPEG, PNG, GIF, WebP and HEIC/HEIF from their headers', () => {
+    expect(sniffImageMime(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]))).toBe('image/jpeg');
+    expect(sniffImageMime(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]))).toBe('image/png');
+    expect(sniffImageMime(Buffer.from('GIF89a....'))).toBe('image/gif');
+    expect(sniffImageMime(Buffer.from('GIF87a....'))).toBe('image/gif');
+    expect(sniffImageMime(Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8 ')]))).toBe('image/webp');
+    expect(sniffImageMime(ftyp('heic'))).toBe('image/heic');
+    expect(sniffImageMime(ftyp('mif1'))).toBe('image/heif');
+  });
+  it('returns undefined for non-image content (keys, JSON, text, short/empty buffers)', () => {
+    expect(sniffImageMime(Buffer.from('-----BEGIN OPENSSH PRIVATE KEY-----\n'))).toBeUndefined();
+    expect(sniffImageMime(Buffer.from('{"cookieHeader":"x"}'))).toBeUndefined();
+    expect(sniffImageMime(Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVEfmt ')]))).toBeUndefined();
+    expect(sniffImageMime(ftyp('isom'))).toBeUndefined();
+    expect(sniffImageMime(Buffer.alloc(0))).toBeUndefined();
+  });
+});
+
+describe('IMAGE_MIMETYPES / sameImageType', () => {
+  it('lists each supported image mimetype once', () => {
+    expect([...IMAGE_MIMETYPES].sort()).toEqual(
+      ['image/gif', 'image/heic', 'image/heif', 'image/jpeg', 'image/png', 'image/webp'],
+    );
+  });
+  it('treats HEIC and HEIF as one family, everything else by exact match', () => {
+    expect(sameImageType('image/heic', 'image/heif')).toBe(true);
+    expect(sameImageType('image/png', 'image/png')).toBe(true);
+    expect(sameImageType('image/png', 'image/jpeg')).toBe(false);
   });
 });

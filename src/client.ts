@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import {
   buildQueryString,
   CookieJar,
@@ -12,15 +12,25 @@ import {
 } from '@chrischall/mcp-utils';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
-import { mimetypeForPath, imageDimensions } from './image-meta.js';
+import {
+  IMAGE_MIMETYPES,
+  imageDimensions,
+  mimetypeForPath,
+  sameImageType,
+  sniffImageMime,
+} from './image-meta.js';
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 
 /** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
 const MAX_UPLOAD_BYTES = 20_000_000;
 
-/** Expand a leading `~` to the home directory (the only shell expansion we do). */
-function expandHome(p: string): string {
-  return p === '~' || p.startsWith('~/') ? homedir() + p.slice(1) : p;
+/**
+ * Resolve an upload path to an absolute one: expand a leading `~` to the home
+ * directory (the only shell expansion we do), then resolve against the cwd.
+ * Shared with the upload tool's preview so it shows exactly what would be read.
+ */
+export function resolveUploadPath(p: string): string {
+  return resolve(p === '~' || p.startsWith('~/') ? homedir() + p.slice(1) : p);
 }
 
 /** The session-resolver signature the client depends on (injectable in tests). */
@@ -766,27 +776,49 @@ export class EviteClient {
    * mimetype declared in step 1 must match the Blob's type in step 2.
    */
   async uploadPhoto(eventId: string, input: UploadPhotoInput): Promise<UploadPhotoResult> {
-    const abs = expandHome(input.path);
-    const mimetype = input.mimetype ?? mimetypeForPath(abs);
-    if (!mimetype) {
-      throw new Error(
-        `Unknown image type for "${input.path}" — use a .jpg/.png/.gif/.webp/.heic file or pass mimetype.`,
-      );
+    const abs = resolveUploadPath(input.path);
+    // SECURITY (fleet-audit #102): the path comes from the model, and guest-authored
+    // content (messages, RSVP notes) reaches the model verbatim — a prompt-injection
+    // channel. So the only thing trusted is the file's own bytes: whatever the
+    // extension or a declared mimetype says, the header must identify a supported
+    // image, and a declared type must agree with it. An SSH key or a session file
+    // can never be shipped to a guest-visible gallery.
+    if (input.mimetype !== undefined && !IMAGE_MIMETYPES.includes(input.mimetype)) {
+      throw new McpToolError(`Unsupported mimetype "${input.mimetype}".`, {
+        hint: `Use one of ${IMAGE_MIMETYPES.join(', ')} (or omit it to infer from the file).`,
+      });
     }
     // A FILE-BACKED Blob: `fetch` streams the bytes off disk as it sends the
     // multipart body, so a 20 MB photo never becomes a 20 MB Buffer in memory.
     // Both file operations live in one try so any read-time I/O error (the
     // file vanishing between awaits, EACCES, …) surfaces as the friendly
-    // message rather than a raw Node error. Dimensions need only the header,
-    // so readFileHead pulls just the first 64 KB off disk.
-    let blob: Blob;
+    // message rather than a raw Node error. The type sniff and the dimensions
+    // need only the header, so readFileHead pulls just the first 64 KB off disk.
+    // Nothing leaves the machine until every check below has passed.
     let head: Buffer;
+    let blob: Blob;
     try {
-      blob = await fileBlob(abs, { type: mimetype });
       head = await readFileHead(abs, 65_536);
+      blob = await fileBlob(abs);
     } catch {
       throw new Error(`Cannot read image file: ${input.path}`);
     }
+    const sniffed = sniffImageMime(head);
+    if (!sniffed) {
+      throw new McpToolError(`Refusing to upload "${input.path}": its contents are not an image.`, {
+        hint: 'Only JPEG, PNG, GIF, WebP and HEIC/HEIF image files can be uploaded to an event album.',
+      });
+    }
+    const mimetype = input.mimetype ?? mimetypeForPath(abs) ?? sniffed;
+    if (!sameImageType(mimetype, sniffed)) {
+      throw new McpToolError(
+        `Refusing to upload "${input.path}": it is declared ${mimetype} but its contents are ${sniffed}.`,
+        { hint: `Omit mimetype (or pass ${sniffed}), or rename the file to match its format.` },
+      );
+    }
+    // The GCS policy enforces Content-Type == mimetype, so the uploaded Blob must
+    // carry the type declared in step 1 (a zero-copy re-type of the same file).
+    blob = blob.slice(0, blob.size, mimetype);
     if (blob.size > MAX_UPLOAD_BYTES) {
       throw new Error(
         `Image is ${blob.size} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,

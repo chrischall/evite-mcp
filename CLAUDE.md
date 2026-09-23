@@ -42,7 +42,8 @@ src/
   client.ts         EviteClient — authenticated HTTP over /services/ (+ /ajax/,
                     /tsunami/). get()/getHtml() reads, write() mutations w/ the
                     two-tier CSRF recovery, plus uploadPhoto's 4-step GCS flow.
-  image-meta.ts     mimetypeForPath() + imageDimensions() for upload_photo.
+  image-meta.ts     mimetypeForPath() + imageDimensions() + sniffImageMime()
+                    (magic-byte check: upload_photo only ships real images).
   tools/
     healthcheck.ts  registerHealthcheckTools — evite_healthcheck.
     events.ts       registerEventTools — list_events, get_event, list_templates.

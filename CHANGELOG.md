@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/chrischall/evite-mcp/compare/v1.1.2...v1.1.3) (2026-09-23)
+
+
+### Bug Fixes
+
+* stop 403s forcing password re-logins, stop duplicate drafts on create, and upload only real images ([#161](https://github.com/chrischall/evite-mcp/issues/161)) ([7bdce4d](https://github.com/chrischall/evite-mcp/commit/7bdce4d56c1dd7d1b4622b66e80ad6b7573c2e69))
+
 ## [1.1.2](https://github.com/chrischall/evite-mcp/compare/v1.1.1...v1.1.2) (2026-09-23)
 
 

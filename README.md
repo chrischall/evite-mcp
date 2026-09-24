@@ -6,11 +6,11 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for [Evite](https://www.evite.com) — read and act on your events as both **guest** (invitations received) and **host** (events you created): list events, view guest lists & RSVP tallies, RSVP, message guests, and create/edit events. Built on [`@chrischall/mcp-utils`](https://github.com/chrischall/mcp-utils).
 
-> **Status: read + write tools live.** The five read tools work against Evite's internal API, authenticating from email/password (tier-1, `POST /ajax_login`), a raw cookie env var, or a signed-in browser tab (fetchproxy bootstrap). The thirteen write tools are **confirm-gated** — without `confirm: true` they only return a dry-run preview and send nothing — and their endpoints are **live-verified** (see [`docs/EVITE-API.md`](docs/EVITE-API.md)); a couple of request *bodies* are still assumed rather than captured ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
+> **Status: read + write tools live.** The five read tools work against Evite's internal API, authenticating from email/password (tier-1, `POST /ajax_login`), a raw cookie env var, or a signed-in browser tab (fetchproxy bootstrap). The thirteen write tools **ask you to confirm first** — nothing is sent until you approve (see [Confirmations](#confirmations)) — and their endpoints are **live-verified** (see [`docs/EVITE-API.md`](docs/EVITE-API.md)); a couple of request *bodies* are still assumed rather than captured ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
 
 ## Tools
 
-Six read tools (all read-only), thirteen confirm-gated write tools, plus `evite_healthcheck`:
+Six read tools (all read-only), thirteen confirmed write tools, plus `evite_healthcheck`:
 
 | Tool | Endpoint | Returns |
 | --- | --- | --- |
@@ -21,9 +21,9 @@ Six read tools (all read-only), thirteen confirm-gated write tools, plus `evite_
 | `evite_list_messages` | `GET /services/event/v1/{id}/posts/` | the event's Messages thread |
 | `evite_list_templates` | scrapes `/invites/{category}/` | invitation template slugs (the `template_name` `evite_create_event` needs) + display names |
 
-### Write tools (confirm-gated)
+### Write tools (confirmed)
 
-Every write tool takes `confirm: boolean`. **Without `confirm: true` it performs no network call and returns a dry-run preview** of exactly what would be sent — that is the safe default. Only `confirm: true` reaches the live path. Endpoints are verified; the CSRF token (`X-CSRFToken`, read fresh per request as it rotates) is attached centrally.
+Every write tool **asks you to confirm before it sends anything**. A client that can show a confirmation prompt (Claude Code) shows one with the exact values that would be sent. Elsewhere (claude.ai, Claude Desktop) the first call performs no network call and returns that preview plus a `confirmToken`; only a repeat call with the token performs the write. The token is single-use, expires, and is bound to the tool and the exact values — change anything and it is refused (`DRAFT_CHANGED`) with a fresh preview. See [Confirmations](#confirmations). Endpoints are verified; the CSRF token (`X-CSRFToken`, read fresh per request as it rotates) is attached centrally.
 
 | Tool | Endpoint | Action |
 | --- | --- | --- |
@@ -41,7 +41,15 @@ Every write tool takes `confirm: boolean`. **Without `confirm: true` it performs
 | `evite_reinstate_event` | `POST …/actions/reinstate/` | reinstate a cancelled event |
 | `evite_duplicate_event` | `GET /plus/create/{id}/copy/` (→302) | copy an event into a fresh draft; returns the new event id |
 
-The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send`. `evite_send`, `evite_send_message`, `evite_broadcast`, and `evite_cancel_event` have real-world effects (emails / cancellation notices), so their confirm-gating matters.
+The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send`. `evite_send`, `evite_send_message`, `evite_broadcast`, and `evite_cancel_event` have real-world effects (emails / cancellation notices), so their confirmation matters.
+
+## Confirmations
+
+| variable | default | |
+|---|---|---|
+| `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt (claude.ai, Claude Desktop). `ask-user`: two steps — the first call does nothing and returns a preview plus a token, and the model must get your approval in chat before calling again with it. `auto`: the same two steps, but the model may use the token after reviewing the preview itself. `refuse`: writes are refused on such clients. A client that can show prompts (Claude Code) always gets the real prompt. An unrecognised value is treated as `refuse`. |
+| `MCP_CONFIRM_TTL_SECONDS` | `600` | How long a token stays valid. |
+| `MCP_CONFIRM_SECRET` | random per process | Signing key; set it only if tokens must survive a server restart. |
 
 ## Architecture
 
@@ -55,7 +63,7 @@ One tier is intentionally **deferred** (the resolver is shaped to slot it in):
 
 - **Fetchproxy as transport** (bot-wall retry through the browser bridge) — a fallback only needed if plain `fetch` trips a wall; not observed during discovery.
 
-The thirteen write tools (rsvp, add/update/remove-guest, send, send-message, broadcast, upload-photo, create/update/cancel/reinstate/duplicate event) are **confirm-gated** (dry-run preview unless `confirm: true`). The single private `client.write()` helper attaches the CSRF token via one centralized header (`CSRF_HEADER` = `X-CSRFToken`; the `csrftoken` cookie rotates mid-session, so it's read fresh per request). Endpoints span three bases — REST `/services/…`, the legacy `/ajax/event/{id}/…` guest list, and the `/tsunami/…` messaging service — all live-verified; a couple of request bodies remain assumed ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
+The thirteen write tools (rsvp, add/update/remove-guest, send, send-message, broadcast, upload-photo, create/update/cancel/reinstate/duplicate event) **ask you to confirm first** (a prompt, or a preview + single-use `confirmToken`; see [Confirmations](#confirmations)). The single private `client.write()` helper attaches the CSRF token via one centralized header (`CSRF_HEADER` = `X-CSRFToken`; the `csrftoken` cookie rotates mid-session, so it's read fresh per request). Endpoints span three bases — REST `/services/…`, the legacy `/ajax/event/{id}/…` guest list, and the `/tsunami/…` messaging service — all live-verified; a couple of request bodies remain assumed ([#3](https://github.com/chrischall/evite-mcp/issues/3)).
 
 ## Development
 

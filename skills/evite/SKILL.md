@@ -49,6 +49,6 @@ The server resolves a session in priority order (see the README for details):
 
 **Read (6 + healthcheck):** `evite_list_events`, `evite_get_event`, `evite_list_guests`, `evite_rsvp_summary`, `evite_list_messages`, `evite_list_templates`, `evite_healthcheck`.
 
-**Write (confirm-gated):** `evite_rsvp`, `evite_send_message`, `evite_broadcast`, `evite_create_event`, `evite_update_event`, `evite_add_guest`, `evite_update_guest`, `evite_remove_guest`, `evite_send`, `evite_cancel_event`, `evite_reinstate_event`, `evite_duplicate_event`.
+**Write (asks you to confirm first):** `evite_rsvp`, `evite_send_message`, `evite_broadcast`, `evite_create_event`, `evite_update_event`, `evite_add_guest`, `evite_update_guest`, `evite_remove_guest`, `evite_send`, `evite_cancel_event`, `evite_reinstate_event`, `evite_duplicate_event`.
 
-Every write tool takes `confirm: boolean`. **Without `confirm: true` it makes no network call and returns a dry-run preview** of exactly what would be sent — the safe default. The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send`.
+Every write tool **asks the user to confirm before it sends anything**: a confirmation prompt where the client supports one; otherwise the first call makes no network call and returns a preview of exactly what would be sent plus a `confirmToken`. Show the user that preview and get their approval in chat, then call the same tool again with the same arguments plus `confirmToken`. The token is single-use and bound to those exact arguments — change anything and it is refused (`DRAFT_CHANGED`) with a fresh preview and token. The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send`.

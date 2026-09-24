@@ -602,8 +602,9 @@ export class EviteClient {
   // Writes
   //
   // SAFETY: these are the ONLY methods that mutate Evite. They are reached only
-  // when a write tool is called with `confirm: true` — the default path returns
-  // a dry-run preview without ever touching the network.
+  // once the user has confirmed the write (an elicitation prompt, or a repeat
+  // call carrying the preview's confirmToken) — until then a write tool returns
+  // a preview without ever touching the network.
   //
   // CSRF: all writes send the current `csrftoken` cookie in `X-CSRFToken`
   // (VERIFIED). The cookie ROTATES mid-session — the resolver must read it fresh

@@ -89,55 +89,55 @@
     },
     {
       "name": "evite_rsvp",
-      "description": "RSVP for a guest (confirm-gated)"
+      "description": "RSVP for a guest (asks you to confirm first)"
     },
     {
       "name": "evite_send_message",
-      "description": "Send a private message to one guest (confirm-gated)"
+      "description": "Send a private message to one guest (asks you to confirm first)"
     },
     {
       "name": "evite_broadcast",
-      "description": "Broadcast a message to whole RSVP segments at once (confirm-gated)"
+      "description": "Broadcast a message to whole RSVP segments at once (asks you to confirm first)"
     },
     {
       "name": "evite_create_event",
-      "description": "Create an event draft (confirm-gated)"
+      "description": "Create an event draft (asks you to confirm first)"
     },
     {
       "name": "evite_update_event",
-      "description": "Edit an event (confirm-gated)"
+      "description": "Edit an event (asks you to confirm first)"
     },
     {
       "name": "evite_add_guest",
-      "description": "Add guests to the draft list (confirm-gated)"
+      "description": "Add guests to the draft list (asks you to confirm first)"
     },
     {
       "name": "evite_update_guest",
-      "description": "Edit a draft guest (confirm-gated)"
+      "description": "Edit a draft guest (asks you to confirm first)"
     },
     {
       "name": "evite_remove_guest",
-      "description": "Remove a draft guest (confirm-gated)"
+      "description": "Remove a draft guest (asks you to confirm first)"
     },
     {
       "name": "evite_send",
-      "description": "Send now — email the ready-to-send guests (confirm-gated)"
+      "description": "Send now — email the ready-to-send guests (asks you to confirm first)"
     },
     {
       "name": "evite_cancel_event",
-      "description": "Cancel an event / delete a draft (confirm-gated)"
+      "description": "Cancel an event / delete a draft (asks you to confirm first)"
     },
     {
       "name": "evite_reinstate_event",
-      "description": "Reinstate a cancelled event (confirm-gated)"
+      "description": "Reinstate a cancelled event (asks you to confirm first)"
     },
     {
       "name": "evite_duplicate_event",
-      "description": "Copy an event into a fresh draft (confirm-gated)"
+      "description": "Copy an event into a fresh draft (asks you to confirm first)"
     },
     {
       "name": "evite_upload_photo",
-      "description": "Upload a local image to an event's shared photo album (confirm-gated)"
+      "description": "Upload a local image to an event's shared photo album (asks you to confirm first)"
     },
     {
       "name": "evite_healthcheck",

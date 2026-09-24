@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCP server for **Evite** event management — talks to evite.com's internal `/services/` (and `/ajax/`, `/tsunami/`) API using the session cookies a signed-in browser holds (Evite has no public API). Cookie-session archetype.
 
-**6 read tools + 13 confirm-gated write tools** (plus `evite_healthcheck`). Writes default to a dry-run preview and only mutate on `confirm: true`.
+**6 read tools + 13 confirmed write tools** (plus `evite_healthcheck`). Writes ask the user to confirm first — an elicitation prompt where the client supports one, otherwise a preview + single-use `confirmToken` (`MCP_CONFIRM_MODE`) — and mutate only once confirmed.
 
 Three auth tiers, in priority order:
 
@@ -49,7 +49,7 @@ src/
     events.ts       registerEventTools — list_events, get_event, list_templates.
     guests.ts       registerGuestTools — list_guests, rsvp_summary.
     messages.ts     registerMessageTools — list_messages.
-    writes.ts       registerWriteTools — the 13 confirm-gated write tools.
+    writes.ts       registerWriteTools — the 13 confirmed write tools.
 ```
 
 Wiring: `index.ts` passes the `registerXxxTools` functions to `runMcp({ tools: [...] })`; each registers its tools against the shared `EviteClient`.
@@ -67,7 +67,7 @@ Read tools (`accept: application/json`, no mutation):
 | `evite_rsvp_summary` | guests.ts | `summary` slice of the guests endpoint |
 | `evite_list_messages` | messages.ts | `GET /services/event/v1/{id}/posts/` |
 
-Write tools (all in `writes.ts`, all confirm-gated — dry-run preview unless `confirm: true`):
+Write tools (all in `writes.ts`, all gated on the user's confirmation — see the Confirmation bullet under Conventions):
 
 | Tool | Endpoint |
 | --- | --- |
@@ -90,7 +90,7 @@ All endpoints are live-verified (probe 2026-06-01/02) — see `docs/EVITE-API.md
 ## Conventions
 
 - **TDD.** Write the failing test first; tests mock the session resolver / `@fetchproxy/bootstrap` at the module boundary and never hit the network. `EviteClient` and `loginWithPassword` accept injectable deps for this.
-- **Confirm-gating.** Every write tool takes `confirm` (`schemaConfirm`). With `confirm` absent/false the tool makes **no network call** and returns a dry-run `preview(...)` of the exact values that *would* be sent (plus any caveat). Only `confirm: true` reaches `client.write(...)`. `write()` is the *only* thing that mutates Evite.
+- **Confirmation.** Every write tool takes `confirmToken` (`confirmTokenParam`) and calls the local `confirmWrite(ctx, args.confirmToken, {...})` helper (a thin wrapper over mcp-utils' `requireConfirmationWithFallback` + `confirmationFromEnv`) before touching the client; `if (gate) return gate;`. A client with elicitation gets a real prompt. Otherwise the first call makes **no network call** and returns `status: "confirmation-required"`, a preview (`wouldSend` + any `caveat`) and a `confirmToken`; only a repeat call with that token reaches `client.write(...)`. The token binds the tool and a hash of `payload` — exactly what the client method receives — so build the payload fresh on every call (upload_photo re-stats the file) and a change between the phases is refused as `DRAFT_CHANGED`. Tokens are single-use (`TOKEN_REUSED`) and expire (`MCP_CONFIRM_TTL_SECONDS`). `MCP_CONFIRM_MODE=refuse` turns the token fallback off. `write()` is the *only* thing that mutates Evite.
 - **stderr-only stdio.** Never `console.log` to stdout — it corrupts the MCP stdio framing. `runMcp` owns the transport; tool output goes through `minifiedResult()` (see the result-shape bullet below).
 - **100% coverage.** `vitest.config.ts` enforces **100% lines/functions/branches/statements** on `src/**` (excluding `src/index.ts`). `npm run test:coverage` fails CI on any gap. Use `/* v8 ignore */` only for genuinely unreachable defensive branches.
 - All tools are `evite_*`-prefixed; results go through `minifiedResult()` — read tools via `viewResponse()` (`src/view.ts`), which picks the rung and then calls it; write tools and the healthcheck call it directly. There is no `textResult()` here.
@@ -138,7 +138,7 @@ write-verification, transport archetypes, testing traps) live in
 
 - **Don't cache the CSRF token.** It rotates per-request — read it fresh off each response (see Quirks).
 - **Don't add a second recovery tier or loop in `write()`.** Recovery is capped at exactly one step (CSRF-retry XOR re-login). Don't let both fire.
-- **Don't bypass confirm-gating.** A write must never reach `client.write(...)` without `confirm: true`. New write tools follow the `preview(...)` pattern.
+- **Don't bypass the confirmation.** A write must never reach `client.write(...)` before `confirmWrite(...)` has returned `undefined`. New write tools follow the `confirmWrite` pattern, with a payload that is exactly what the client call receives.
 - **Don't `console.log` to stdout** — it breaks MCP stdio framing.
 - **Don't paste real cookies/credentials into tests.** Mock the resolver / `@fetchproxy/bootstrap` at the module boundary.
 - **Don't bump version files by hand** — release-please owns them.

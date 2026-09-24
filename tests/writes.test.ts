@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { createTestHarness, parseToolResult, type TestHarnessOptions } from '@chrischall/mcp-utils/test';
 import type { EviteClient } from '../src/client.js';
 import { registerWriteTools } from '../src/tools/writes.js';
 
@@ -47,8 +47,39 @@ function fakeClient() {
   };
 }
 
-async function harnessFor(client: EviteClient) {
-  return createTestHarness((server) => registerWriteTools(server, client));
+/**
+ * A harness created WITHOUT an elicitation handler is a client that cannot be
+ * prompted, so (default MCP_CONFIRM_MODE=ask-user) every write goes through the
+ * two-phase preview-token flow.
+ */
+async function harnessFor(client: EviteClient, opts?: TestHarnessOptions) {
+  return createTestHarness((server) => registerWriteTools(server, client), opts);
+}
+
+type Harness = Awaited<ReturnType<typeof harnessFor>>;
+
+interface PhaseOne {
+  status: string;
+  action: string;
+  confirmToken: string;
+  preview: { wouldSend: Record<string, unknown>; caveat?: string };
+}
+
+/** Phase 1: no token — returns the preview and a confirmToken, writes nothing. */
+async function phaseOne(h: Harness, tool: string, args: Record<string, unknown>): Promise<PhaseOne> {
+  const res = await h.callTool(tool, args);
+  expect(res.isError).toBeFalsy();
+  const body = parseToolResult(res) as PhaseOne;
+  expect(body.status).toBe('confirmation-required');
+  expect(typeof body.confirmToken).toBe('string');
+  return body;
+}
+
+/** Both phases: preview, then the same call with the returned token. */
+async function confirmed(h: Harness, tool: string, args: Record<string, unknown>) {
+  const p1 = await phaseOne(h, tool, args);
+  const res = await h.callTool(tool, { ...args, confirmToken: p1.confirmToken });
+  return { p1, res };
 }
 
 /** A fetch spy that MUST never be called in these tool tests. */
@@ -58,7 +89,17 @@ function guardFetch() {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+const savedEnv = { ...process.env };
+beforeEach(() => {
+  delete process.env.MCP_CONFIRM_MODE;
+  delete process.env.MCP_CONFIRM_TTL_SECONDS;
+  delete process.env.MCP_CONFIRM_SECRET;
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const k of Object.keys(process.env)) if (!(k in savedEnv)) delete process.env[k];
+  Object.assign(process.env, savedEnv);
+});
 
 describe('write tool registration', () => {
   it('registers the thirteen write tools, all readOnlyHint:false', async () => {
@@ -84,50 +125,46 @@ describe('write tool registration', () => {
     );
     for (const t of tools) {
       expect(t.annotations?.readOnlyHint).toBe(false);
+      // The confirm boolean is gone; the token is the only confirmation input.
+      const props = (t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+      expect(props).not.toHaveProperty('confirm');
+      expect(props).toHaveProperty('confirmToken');
     }
     await h.close();
   });
 });
 
 describe('evite_rsvp', () => {
-  it('without confirm: returns a preview and makes NO network/client call', async () => {
+  const args = {
+    event_id: 'EVENTID0',
+    guest_id: 'GUEST9',
+    response: 'yes',
+    number_of_adults: 2,
+    number_of_kids: 1,
+    note: 'see you there',
+  };
+
+  it('phase 1: returns a preview + token and makes NO network/client call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_rsvp', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      response: 'yes',
-      number_of_adults: 2,
-      number_of_kids: 1,
-      note: 'see you there',
-    });
+    const p1 = await phaseOne(h, 'evite_rsvp', args);
     expect(client.rsvp).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    const text = res.content[0]!.text as string;
-    expect(text).toMatch(/preview/i);
-    expect(text).toContain('EVENTID0');
-    expect(text).toContain('GUEST9');
-    expect(text).toContain('yes');
-    expect(text).toContain('confirm');
+    expect(p1.action).toBe('evite.rsvp');
+    expect(p1.preview.wouldSend).toEqual(args);
     await h.close();
   });
 
-  it('with confirm: calls client.rsvp with the mapped fields', async () => {
+  it('phase 2: with the token, calls client.rsvp once with the mapped fields', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_rsvp', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      response: 'maybe',
-      number_of_adults: 1,
-      number_of_kids: 0,
-      confirm: true,
-    });
+    const { res } = await confirmed(h, 'evite_rsvp', { ...args, response: 'maybe', note: undefined });
+    expect(client.rsvp).toHaveBeenCalledTimes(1);
     expect(client.rsvp).toHaveBeenCalledWith('EVENTID0', 'GUEST9', {
       response: 'maybe',
-      numberOfAdults: 1,
-      numberOfKids: 0,
+      numberOfAdults: 2,
+      numberOfKids: 1,
       note: undefined,
     });
     expect(parseToolResult(res)).toEqual({ ok: true });
@@ -146,75 +183,69 @@ describe('evite_rsvp', () => {
     expect(res.isError).toBe(true);
     await h.close();
   });
+
+  it('rejects the retired confirm: true — it no longer bypasses the gate', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_rsvp', { ...args, confirm: true });
+    // Unknown keys are stripped by zod, so this is just a phase-1 call.
+    expect((parseToolResult(res) as PhaseOne).status).toBe('confirmation-required');
+    expect(client.rsvp).not.toHaveBeenCalled();
+    await h.close();
+  });
 });
 
 describe('evite_send_message', () => {
-  it('without confirm: previews and makes no call', async () => {
+  const args = { event_id: 'EVENTID0', guest_id: 'GUEST9', message: 'hello all' };
+
+  it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_send_message', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      message: 'hello all',
-    });
+    const p1 = await phaseOne(h, 'evite_send_message', args);
     expect(client.sendMessage).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    const text = res.content[0]!.text as string;
-    expect(text).toMatch(/preview/i);
-    expect(text).toContain('EVENTID0');
-    expect(text).toContain('hello all');
+    expect(p1.preview.wouldSend).toEqual(args);
     // Issue #3: delivery is a Firebase RTDB push, not a REST call — the preview
     // says so, but it is a real send once confirmed.
-    expect(text).toMatch(/rtdb|firebase/i);
+    expect(p1.preview.caveat).toMatch(/rtdb|firebase/i);
     await h.close();
   });
 
-  it('with confirm: calls client.sendMessage', async () => {
+  it('phase 2: calls client.sendMessage once', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_send_message', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      message: 'hello all',
-      confirm: true,
-    });
-    expect(client.sendMessage).toHaveBeenCalledWith('EVENTID0', 'GUEST9', {
-      message: 'hello all',
-    });
+    await confirmed(h, 'evite_send_message', args);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage).toHaveBeenCalledWith('EVENTID0', 'GUEST9', { message: 'hello all' });
     await h.close();
   });
 });
 
 describe('evite_broadcast', () => {
-  it('without confirm: previews and makes no call', async () => {
+  const args = {
+    event_id: 'EVENTID0',
+    message: 'See you Saturday!',
+    groups: ['yes', 'maybe'],
+    participant_count: 4,
+  };
+
+  it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_broadcast', {
-      event_id: 'EVENTID0',
-      message: 'See you Saturday!',
-      groups: ['yes', 'maybe'],
-    });
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
     expect(client.broadcast).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    const text = res.content[0]!.text as string;
-    expect(text).toMatch(/preview/i);
-    expect(text).toContain('See you Saturday!');
-    expect(text).toContain('yes');
+    expect(p1.preview.wouldSend).toEqual(args);
     await h.close();
   });
 
-  it('with confirm: calls client.broadcast with message, groups, participantCount', async () => {
+  it('phase 2: calls client.broadcast once with message, groups, participantCount', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_broadcast', {
-      event_id: 'EVENTID0',
-      message: 'See you Saturday!',
-      groups: ['yes', 'maybe'],
-      participant_count: 4,
-      confirm: true,
-    });
+    await confirmed(h, 'evite_broadcast', args);
+    expect(client.broadcast).toHaveBeenCalledTimes(1);
     expect(client.broadcast).toHaveBeenCalledWith('EVENTID0', {
       message: 'See you Saturday!',
       groups: ['yes', 'maybe'],
@@ -225,20 +256,18 @@ describe('evite_broadcast', () => {
 });
 
 describe('evite_upload_photo', () => {
-  it('without confirm: previews and makes no call (no file read)', async () => {
+  it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_upload_photo', {
+    const p1 = await phaseOne(h, 'evite_upload_photo', {
       event_id: 'EVENTID0',
       guest_id: 'GUEST9',
       path: '~/Pictures/cake.jpg',
     });
     expect(client.uploadPhoto).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    const text = res.content[0]!.text as string;
-    expect(text).toMatch(/preview/i);
-    expect(text).toContain('cake.jpg');
+    expect(p1.preview.wouldSend.path).toBe('~/Pictures/cake.jpg');
     await h.close();
   });
 
@@ -249,19 +278,37 @@ describe('evite_upload_photo', () => {
     writeFileSync(file, Buffer.alloc(1234));
     try {
       const h = await harnessFor(fakeClient());
-      const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
-      const parsed = parseToolResult(res) as { wouldSend: Record<string, unknown> };
-      expect(parsed.wouldSend.resolved_path).toBe(file);
-      expect(parsed.wouldSend.size_bytes).toBe(1234);
+      const p1 = await phaseOne(h, 'evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
+      expect(p1.preview.wouldSend.resolved_path).toBe(file);
+      expect(p1.preview.wouldSend.size_bytes).toBe(1234);
       // A ~ path resolves against the home directory; a missing file has no size.
-      const res2 = await h.callTool('evite_upload_photo', {
+      const p2 = await phaseOne(h, 'evite_upload_photo', {
         event_id: 'E',
         guest_id: 'G',
         path: '~/evite-mcp-no-such-file.png',
       });
-      const parsed2 = parseToolResult(res2) as { wouldSend: Record<string, unknown> };
-      expect(parsed2.wouldSend.resolved_path).toBe(join(homedir(), 'evite-mcp-no-such-file.png'));
-      expect(parsed2.wouldSend.size_bytes).toBeUndefined();
+      expect(p2.preview.wouldSend.resolved_path).toBe(join(homedir(), 'evite-mcp-no-such-file.png'));
+      expect(p2.preview.wouldSend.size_bytes).toBeUndefined();
+      await h.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses the token when the file changed between preview and upload (DRAFT_CHANGED)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'evite-preview-'));
+    const file = join(dir, 'cake.png');
+    writeFileSync(file, Buffer.alloc(10));
+    try {
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const args = { event_id: 'E', guest_id: 'G', path: file };
+      const p1 = await phaseOne(h, 'evite_upload_photo', args);
+      writeFileSync(file, Buffer.alloc(20));
+      const res = await h.callTool('evite_upload_photo', { ...args, confirmToken: p1.confirmToken });
+      expect(res.isError).toBe(true);
+      expect((parseToolResult(res) as { error: string }).error).toBe('DRAFT_CHANGED');
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
       await h.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -276,22 +323,21 @@ describe('evite_upload_photo', () => {
       guest_id: 'G',
       path: '~/.ssh/id_ed25519',
       mimetype: 'text/plain',
-      confirm: true,
     });
     expect(res.isError).toBe(true);
     expect(client.uploadPhoto).not.toHaveBeenCalled();
     await h.close();
   });
 
-  it('with confirm: calls client.uploadPhoto with path + guestId', async () => {
+  it('phase 2: calls client.uploadPhoto once with path + guestId', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_upload_photo', {
+    await confirmed(h, 'evite_upload_photo', {
       event_id: 'EVENTID0',
       guest_id: 'GUEST9',
       path: '~/Pictures/cake.jpg',
-      confirm: true,
     });
+    expect(client.uploadPhoto).toHaveBeenCalledTimes(1);
     expect(client.uploadPhoto).toHaveBeenCalledWith('EVENTID0', {
       path: '~/Pictures/cake.jpg',
       guestId: 'GUEST9',
@@ -302,35 +348,31 @@ describe('evite_upload_photo', () => {
 });
 
 describe('evite_create_event', () => {
-  it('without confirm: previews and makes no call', async () => {
+  const args = {
+    title: 'Pool Party',
+    start_datetime: '2026-07-01T18:00:00',
+    template_name: 'camp-confetti',
+    message: 'come swim',
+  };
+
+  it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_create_event', {
-      title: 'Pool Party',
-      start_datetime: '2026-07-01T18:00:00',
-      template_name: 'camp-confetti',
-    });
+    const p1 = await phaseOne(h, 'evite_create_event', args);
     expect(client.createEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    const text = res.content[0]!.text as string;
-    expect(text).toMatch(/preview/i);
-    expect(text).toContain('Pool Party');
+    expect(p1.preview.wouldSend).toEqual(args);
     // create returns a 500 even on success — the preview should warn about that
-    expect(text).toMatch(/500/i);
+    expect(p1.preview.caveat).toMatch(/500/i);
     await h.close();
   });
 
-  it('with confirm: calls client.createEvent with mapped input', async () => {
+  it('phase 2: calls client.createEvent once with mapped input', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_create_event', {
-      title: 'Pool Party',
-      start_datetime: '2026-07-01T18:00:00',
-      template_name: 'camp-confetti',
-      message: 'come swim',
-      confirm: true,
-    });
+    await confirmed(h, 'evite_create_event', args);
+    expect(client.createEvent).toHaveBeenCalledTimes(1);
     expect(client.createEvent).toHaveBeenCalledWith({
       title: 'Pool Party',
       startDatetime: '2026-07-01T18:00:00',
@@ -343,40 +385,46 @@ describe('evite_create_event', () => {
 });
 
 describe('evite_update_event', () => {
-  it('without confirm: previews and makes no call', async () => {
+  it('phase 1: previews the wire patch and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_update_event', {
-      event_id: 'EVENTID0',
-      title: 'Renamed',
-    });
+    const p1 = await phaseOne(h, 'evite_update_event', { event_id: 'EVENTID0', title: 'Renamed' });
     expect(client.updateEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    const text = res.content[0]!.text as string;
-    expect(text).toMatch(/preview/i);
-    expect(text).toContain('EVENTID0');
-    expect(text).toContain('Renamed');
+    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0', patch: { title: 'Renamed' } });
     await h.close();
   });
 
-  it('with confirm: calls client.updateEvent with only the provided fields', async () => {
+  it('phase 2: calls client.updateEvent once with only the provided fields', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_update_event', {
-      event_id: 'EVENTID0',
-      title: 'Renamed',
-      confirm: true,
-    });
+    await confirmed(h, 'evite_update_event', { event_id: 'EVENTID0', title: 'Renamed' });
+    expect(client.updateEvent).toHaveBeenCalledTimes(1);
     expect(client.updateEvent).toHaveBeenCalledWith('EVENTID0', { title: 'Renamed' });
     await h.close();
   });
 
-  it('requires at least one field to change', async () => {
+  it('maps every snake_case field → the wire patch', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_update_event', { event_id: 'EVENTID0', confirm: true });
+    await confirmed(h, 'evite_update_event', {
+      event_id: 'EVENTID0', title: 'New Title',
+      start_datetime: '2026-07-01T18:00:00Z', end_datetime: '2026-07-01T21:00:00Z',
+      message: 'Updated details',
+    });
+    expect(client.updateEvent).toHaveBeenCalledWith('EVENTID0', {
+      title: 'New Title', startDatetime: '2026-07-01T18:00:00Z', endDatetime: '2026-07-01T21:00:00Z', message: 'Updated details',
+    });
+    await h.close();
+  });
+
+  it('requires at least one field to change (refused before any preview or token)', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_update_event', { event_id: 'EVENTID0' });
     expect(res.isError).toBe(true);
+    expect(res.content[0]!.text as string).toMatch(/at least one field/);
     expect(client.updateEvent).not.toHaveBeenCalled();
     await h.close();
   });
@@ -385,53 +433,46 @@ describe('evite_update_event', () => {
 describe('evite_add_guest', () => {
   const guests = [{ name: 'A', email: 'a@example.com' }];
 
-  it('without confirm: previews and makes no call', async () => {
+  it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_add_guest', { event_id: 'EVENTID0', guests });
+    const p1 = await phaseOne(h, 'evite_add_guest', { event_id: 'EVENTID0', guests });
     expect(client.addGuest).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(res.content[0]!.text as string).toMatch(/preview/i);
+    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0', guests });
     await h.close();
   });
 
-  it('with confirm: calls client.addGuest with the guest list', async () => {
+  it('phase 2: calls client.addGuest once with the guest list', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_add_guest', { event_id: 'EVENTID0', guests, confirm: true });
+    await confirmed(h, 'evite_add_guest', { event_id: 'EVENTID0', guests });
+    expect(client.addGuest).toHaveBeenCalledTimes(1);
     expect(client.addGuest).toHaveBeenCalledWith('EVENTID0', guests);
     await h.close();
   });
 });
 
-describe('evite_update_guest / evite_remove_guest', () => {
-  it('update without confirm: previews and makes no call', async () => {
+describe('evite_update_guest', () => {
+  const args = { event_id: 'EVENTID0', guest_id: 'GUEST9', name: 'New', email: 'new@example.com' };
+
+  it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_update_guest', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      name: 'New',
-      email: 'new@example.com',
-    });
+    const p1 = await phaseOne(h, 'evite_update_guest', args);
     expect(client.updateGuest).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(res.content[0]!.text as string).toMatch(/preview/i);
+    expect(p1.preview.wouldSend).toEqual(args);
     await h.close();
   });
 
-  it('update with confirm: calls client.updateGuest', async () => {
+  it('phase 2: calls client.updateGuest once', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_update_guest', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      name: 'New',
-      email: 'new@example.com',
-      confirm: true,
-    });
+    await confirmed(h, 'evite_update_guest', args);
+    expect(client.updateGuest).toHaveBeenCalledTimes(1);
     expect(client.updateGuest).toHaveBeenCalledWith('EVENTID0', 'GUEST9', {
       name: 'New',
       email: 'new@example.com',
@@ -439,123 +480,191 @@ describe('evite_update_guest / evite_remove_guest', () => {
     });
     await h.close();
   });
+});
 
-  it('remove with confirm: calls client.removeGuest', async () => {
+describe('evite_remove_guest', () => {
+  it('phase 1: previews and makes no call', async () => {
+    const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_remove_guest', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      confirm: true,
-    });
-    expect(client.removeGuest).toHaveBeenCalledWith('EVENTID0', 'GUEST9');
+    const p1 = await phaseOne(h, 'evite_remove_guest', { event_id: 'EV', guest_id: 'G' });
+    expect(client.removeGuest).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(p1.preview.wouldSend).toEqual({ event_id: 'EV', guest_id: 'G' });
+    await h.close();
+  });
+
+  it('phase 2: calls client.removeGuest once', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await confirmed(h, 'evite_remove_guest', { event_id: 'EV', guest_id: 'G' });
+    expect(client.removeGuest).toHaveBeenCalledTimes(1);
+    expect(client.removeGuest).toHaveBeenCalledWith('EV', 'G');
     await h.close();
   });
 });
 
 describe('evite_send', () => {
-  it('without confirm: previews (warns it emails) and makes no call', async () => {
+  it('phase 1: previews (warns it emails) and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_send', { event_id: 'EVENTID0' });
+    const p1 = await phaseOne(h, 'evite_send', { event_id: 'EVENTID0' });
     expect(client.sendInvitation).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(res.content[0]!.text as string).toMatch(/email/i);
+    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0' });
+    expect(p1.preview.caveat).toMatch(/email/i);
     await h.close();
   });
 
-  it('with confirm: calls client.sendInvitation', async () => {
+  it('phase 2: calls client.sendInvitation once', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_send', { event_id: 'EVENTID0', confirm: true });
+    await confirmed(h, 'evite_send', { event_id: 'EVENTID0' });
+    expect(client.sendInvitation).toHaveBeenCalledTimes(1);
     expect(client.sendInvitation).toHaveBeenCalledWith('EVENTID0');
     await h.close();
   });
 });
 
-describe('evite_cancel_event / evite_reinstate_event', () => {
-  it('cancel without confirm: previews (warns destructive) and makes no call', async () => {
+describe('evite_cancel_event', () => {
+  it('phase 1: previews (warns destructive) and makes no call', async () => {
+    const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_cancel_event', { event_id: 'EVENTID0' });
+    const p1 = await phaseOne(h, 'evite_cancel_event', { event_id: 'EVENTID0' });
     expect(client.cancelEvent).not.toHaveBeenCalled();
-    expect(res.content[0]!.text as string).toMatch(/destructive/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(p1.preview.caveat).toMatch(/destructive/i);
     await h.close();
   });
 
-  it('cancel with confirm: calls client.cancelEvent', async () => {
+  it('phase 2: calls client.cancelEvent once', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_cancel_event', { event_id: 'EVENTID0', confirm: true });
+    await confirmed(h, 'evite_cancel_event', { event_id: 'EVENTID0' });
+    expect(client.cancelEvent).toHaveBeenCalledTimes(1);
     expect(client.cancelEvent).toHaveBeenCalledWith('EVENTID0');
     await h.close();
   });
+});
 
-  it('reinstate with confirm: calls client.reinstateEvent', async () => {
+describe('evite_reinstate_event', () => {
+  it('phase 1: previews and makes no call', async () => {
+    const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_reinstate_event', { event_id: 'EVENTID0', confirm: true });
-    expect(client.reinstateEvent).toHaveBeenCalledWith('EVENTID0');
+    const p1 = await phaseOne(h, 'evite_reinstate_event', { event_id: 'EV' });
+    expect(client.reinstateEvent).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(p1.preview.wouldSend).toEqual({ event_id: 'EV' });
+    await h.close();
+  });
+
+  it('phase 2: calls client.reinstateEvent once', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await confirmed(h, 'evite_reinstate_event', { event_id: 'EV' });
+    expect(client.reinstateEvent).toHaveBeenCalledTimes(1);
+    expect(client.reinstateEvent).toHaveBeenCalledWith('EV');
     await h.close();
   });
 });
 
 describe('evite_duplicate_event', () => {
-  it('without confirm: previews and makes no call', async () => {
+  it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
-    const res = await h.callTool('evite_duplicate_event', { event_id: 'EVENTID0' });
+    const p1 = await phaseOne(h, 'evite_duplicate_event', { event_id: 'EVENTID0' });
     expect(client.duplicateEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(res.content[0]!.text as string).toMatch(/preview/i);
+    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0' });
     await h.close();
   });
 
-  it('with confirm: calls client.duplicateEvent', async () => {
+  it('phase 2: calls client.duplicateEvent once', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_duplicate_event', { event_id: 'EVENTID0', confirm: true });
+    await confirmed(h, 'evite_duplicate_event', { event_id: 'EVENTID0' });
+    expect(client.duplicateEvent).toHaveBeenCalledTimes(1);
     expect(client.duplicateEvent).toHaveBeenCalledWith('EVENTID0');
     await h.close();
   });
 });
 
-describe('remaining write-tool execution + preview paths', () => {
-  it('evite_update_event (confirm) maps snake_case fields → the wire patch', async () => {
+describe('confirmation token rules', () => {
+  const sendArgs = { event_id: 'EVENTID0', guest_id: 'GUEST9', message: 'hello all' };
+
+  it('a used token cannot be replayed (TOKEN_REUSED, no second write)', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    await h.callTool('evite_update_event', {
-      event_id: 'EVENTID0', title: 'New Title',
-      start_datetime: '2026-07-01T18:00:00Z', end_datetime: '2026-07-01T21:00:00Z',
-      message: 'Updated details', confirm: true,
-    });
-    expect(client.updateEvent).toHaveBeenCalledWith('EVENTID0', {
-      title: 'New Title', startDatetime: '2026-07-01T18:00:00Z', endDatetime: '2026-07-01T21:00:00Z', message: 'Updated details',
-    });
+    const { p1 } = await confirmed(h, 'evite_send_message', sendArgs);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    const replay = await h.callTool('evite_send_message', { ...sendArgs, confirmToken: p1.confirmToken });
+    expect(replay.isError).toBe(true);
+    expect((parseToolResult(replay) as { error: string }).error).toBe('TOKEN_REUSED');
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
     await h.close();
   });
 
-  it('evite_remove_guest: preview without confirm, executes with confirm', async () => {
+  it('changing an argument between the phases is refused (DRAFT_CHANGED, no write)', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    const prev = await h.callTool('evite_remove_guest', { event_id: 'EV', guest_id: 'G' });
-    expect(client.removeGuest).not.toHaveBeenCalled();
-    expect(prev.content[0]!.text as string).toMatch(/preview/i);
-    await h.callTool('evite_remove_guest', { event_id: 'EV', guest_id: 'G', confirm: true });
-    expect(client.removeGuest).toHaveBeenCalledWith('EV', 'G');
+    const p1 = await phaseOne(h, 'evite_send_message', sendArgs);
+    const res = await h.callTool('evite_send_message', {
+      ...sendArgs,
+      message: 'something else entirely',
+      confirmToken: p1.confirmToken,
+    });
+    expect(res.isError).toBe(true);
+    const body = parseToolResult(res) as { error: string; preview: PhaseOne['preview'] };
+    expect(body.error).toBe('DRAFT_CHANGED');
+    expect(body.preview.wouldSend.message).toBe('something else entirely');
+    expect(client.sendMessage).not.toHaveBeenCalled();
     await h.close();
   });
 
-  it('evite_reinstate_event: preview without confirm, executes with confirm', async () => {
+  it('a token never crosses tools', async () => {
     const client = fakeClient();
     const h = await harnessFor(client);
-    const prev = await h.callTool('evite_reinstate_event', { event_id: 'EV' });
-    expect(client.reinstateEvent).not.toHaveBeenCalled();
-    expect(prev.content[0]!.text as string).toMatch(/preview/i);
-    await h.callTool('evite_reinstate_event', { event_id: 'EV', confirm: true });
-    expect(client.reinstateEvent).toHaveBeenCalledWith('EV');
+    const p1 = await phaseOne(h, 'evite_reinstate_event', { event_id: 'EV' });
+    const res = await h.callTool('evite_cancel_event', { event_id: 'EV', confirmToken: p1.confirmToken });
+    expect(res.isError).toBe(true);
+    expect((parseToolResult(res) as { error: string }).error).toBe('TOKEN_INVALID');
+    expect(client.cancelEvent).not.toHaveBeenCalled();
+    await h.close();
+  });
+
+  it('a client that accepts the elicitation prompt writes in one call', async () => {
+    const client = fakeClient();
+    const elicitation = vi.fn(async () => ({ action: 'accept' as const, content: { confirmed: true } }));
+    const h = await harnessFor(client, { elicitation });
+    const res = await h.callTool('evite_send', { event_id: 'EVENTID0' });
+    expect(res.isError).toBeFalsy();
+    expect(elicitation).toHaveBeenCalled();
+    expect(client.sendInvitation).toHaveBeenCalledTimes(1);
+    expect(client.sendInvitation).toHaveBeenCalledWith('EVENTID0');
+    await h.close();
+  });
+
+  it('a client that declines the elicitation prompt writes nothing', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client, { elicitation: async () => ({ action: 'decline' as const }) });
+    await h.callTool('evite_send', { event_id: 'EVENTID0' });
+    expect(client.sendInvitation).not.toHaveBeenCalled();
+    await h.close();
+  });
+
+  it('MCP_CONFIRM_MODE=refuse refuses writes on a client that cannot be prompted', async () => {
+    process.env.MCP_CONFIRM_MODE = 'refuse';
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_cancel_event', { event_id: 'EVENTID0' });
+    const body = parseToolResult(res) as { reason: string; confirmToken?: string };
+    expect(body.confirmToken).toBeUndefined();
+    expect(body.reason).toBe('confirmation-unsupported');
+    expect(client.cancelEvent).not.toHaveBeenCalled();
     await h.close();
   });
 });

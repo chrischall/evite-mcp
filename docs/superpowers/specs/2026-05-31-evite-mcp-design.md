@@ -84,10 +84,14 @@ Each exports `registerXxxTools(server, client)` using `server.registerTool` +
 
 ## Mutation safety
 
-Every write tool takes `confirm: boolean` (`schemaConfirm` from `mcp-utils/zod`).
-Without `confirm: true`, the tool performs **no mutation** and returns a dry-run
-preview describing exactly what it would do (which event, the RSVP value, the
-message body, the fields to change). Annotations mark writes non-readonly;
+Every write tool asks the user to confirm before it mutates anything
+(`requireConfirmationWithFallback` + `confirmationFromEnv` from mcp-utils): a
+real confirmation prompt where the client supports elicitation; otherwise the
+first call performs **no mutation** and returns a preview describing exactly
+what it would do (which event, the RSVP value, the message body, the fields to
+change) plus a single-use `confirmToken`, and only a repeat call with that
+token performs the write (`MCP_CONFIRM_MODE`: ask-user | auto | refuse). This
+replaced the original `confirm: boolean` (`schemaConfirm`) gate in September 2026. Annotations mark writes non-readonly;
 `evite_create_event`/`evite_update_event` are built last and gated hardest. No
 destructive bulk operations in v1.
 

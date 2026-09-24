@@ -297,15 +297,18 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     },
     async (args, ctx) => {
       // Show exactly which file would be read, so the decision is made on the
-      // resolved absolute path and size rather than a relative/~ string. Read
-      // on every call and bound into the token, so a file swapped or edited
-      // between the preview and the upload is refused as DRAFT_CHANGED.
+      // resolved absolute path and size rather than a relative/~ string. Size
+      // and modification time are read on every call and bound into the
+      // token, so a file swapped or edited between the preview and the upload
+      // (even for one of the same size) is refused as DRAFT_CHANGED.
       const resolved = resolveUploadPath(args.path);
       let size: number | undefined;
+      let mtimeMs: number | undefined;
       try {
-        size = statSync(resolved).size;
+        ({ size, mtimeMs } = statSync(resolved));
       } catch {
         size = undefined;
+        mtimeMs = undefined;
       }
       const upload = { path: args.path, guestId: args.guest_id, mimetype: args.mimetype };
       const gate = await confirmWrite(ctx, args.confirmToken, {
@@ -313,7 +316,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         action: 'evite.upload_photo',
         message: 'Review and confirm this photo upload:',
         target: args.event_id,
-        payload: { eventId: args.event_id, ...upload, resolvedPath: resolved, sizeBytes: size },
+        payload: { eventId: args.event_id, ...upload, resolvedPath: resolved, sizeBytes: size, mtimeMs },
         wouldSend: {
           event_id: args.event_id,
           guest_id: args.guest_id,

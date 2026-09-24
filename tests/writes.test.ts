@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult, type TestHarnessOptions } from '@chrischall/mcp-utils/test';
@@ -305,6 +305,29 @@ describe('evite_upload_photo', () => {
       const args = { event_id: 'E', guest_id: 'G', path: file };
       const p1 = await phaseOne(h, 'evite_upload_photo', args);
       writeFileSync(file, Buffer.alloc(20));
+      const res = await h.callTool('evite_upload_photo', { ...args, confirmToken: p1.confirmToken });
+      expect(res.isError).toBe(true);
+      expect((parseToolResult(res) as { error: string }).error).toBe('DRAFT_CHANGED');
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      await h.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses the token when a same-size file replaced it between preview and upload (DRAFT_CHANGED)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'evite-preview-'));
+    const file = join(dir, 'cake.png');
+    writeFileSync(file, Buffer.alloc(10, 1));
+    utimesSync(file, 1_000_000, 1_000_000);
+    try {
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const args = { event_id: 'E', guest_id: 'G', path: file };
+      const p1 = await phaseOne(h, 'evite_upload_photo', args);
+      // Same byte size, different content and modification time.
+      writeFileSync(file, Buffer.alloc(10, 2));
+      utimesSync(file, 2_000_000, 2_000_000);
       const res = await h.callTool('evite_upload_photo', { ...args, confirmToken: p1.confirmToken });
       expect(res.isError).toBe(true);
       expect((parseToolResult(res) as { error: string }).error).toBe('DRAFT_CHANGED');

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/chrischall/evite-mcp/compare/v1.1.3...v1.2.0) (2026-09-24)
+
+
+### Features
+
+* confirm writes with a preview token instead of confirm: true ([#163](https://github.com/chrischall/evite-mcp/issues/163)) ([dc520b2](https://github.com/chrischall/evite-mcp/commit/dc520b20cd8fd3497298193ea3ea965e3dcc1383))
+
+
+### Bug Fixes
+
+* **upload:** refuse a confirm token when a same-size photo replaced the file ([#166](https://github.com/chrischall/evite-mcp/issues/166)) ([de06cd7](https://github.com/chrischall/evite-mcp/commit/de06cd7bdcc2c7e95e5bd37d7d9913f60397ab89)), closes [#164](https://github.com/chrischall/evite-mcp/issues/164)
+
 ## [1.1.3](https://github.com/chrischall/evite-mcp/compare/v1.1.2...v1.1.3) (2026-09-23)
 
 

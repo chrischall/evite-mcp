@@ -27,7 +27,7 @@ Three auth tiers, in priority order:
 
 **Session lifecycle** is delegated to `@chrischall/mcp-utils/session`'s **`CookieSessionManager`** (`src/client.ts`): single-flight login, clear-on-settle, and exactly-one re-login-and-replay on a genuine expiry. The resolver is the manager's `login`; `isExpired` flags a 401, and a 403 only when it is a dead session — *except* a response already CSRF-recovered locally (see Quirks). `isPermanentError` caches a rejected email/password (`InvalidCredentialsError`, a `/ajax_login` 401) so a known-bad password is never re-POSTed; a login 429/5xx is a `RateLimitError`/`UnreachableError`, not "check your credentials".
 
-Env vars (also mirrored in `src/config.ts`): `EVITE_EMAIL`, `EVITE_PASSWORD`, `EVITE_SESSION_COOKIE`, `EVITE_DISABLE_FETCHPROXY`.
+Env vars (also mirrored in `src/config.ts`): `EVITE_EMAIL`, `EVITE_PASSWORD`, `EVITE_SESSION_COOKIE`, `EVITE_DISABLE_FETCHPROXY`, plus `EVITE_UPLOAD_DIR` (optional `evite_upload_photo` directory allow-list, passed as `allowedRoots` to `readFileHead`/`fileBlob`).
 
 ## Architecture
 
@@ -38,7 +38,7 @@ src/
                     messages, writes). Session resolves lazily on first call.
   auth.ts           resolveSession() — three-path priority resolver (see above).
   auth-login.ts     loginWithPassword() — tier-1 form login w/ CSRF priming.
-  config.ts         readEnvVar/parseBoolEnv wrappers for the four env vars.
+  config.ts         readEnvVar/parseBoolEnv wrappers for the env vars.
   client.ts         EviteClient — authenticated HTTP over /services/ (+ /ajax/,
                     /tsunami/). get()/getHtml() reads, write() mutations w/ the
                     two-tier CSRF recovery, plus uploadPhoto's 4-step GCS flow.

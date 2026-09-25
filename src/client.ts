@@ -15,6 +15,7 @@ import {
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
 import { InvalidCredentialsError } from './auth-login.js';
+import { config } from './config.js';
 import {
   IMAGE_MIMETYPES,
   imageDimensions,
@@ -937,12 +938,21 @@ export class EviteClient {
     // message rather than a raw Node error. The type sniff and the dimensions
     // need only the header, so readFileHead pulls just the first 64 KB off disk.
     // Nothing leaves the machine until every check below has passed.
+    // When EVITE_UPLOAD_DIR is set, both reads are confined to it: a path that
+    // resolves (symlinks included) outside those directories is refused before
+    // a single byte is read, let alone uploaded.
+    const roots = config.uploadRoots();
     let head: Buffer;
     let blob: Blob;
     try {
-      head = await readFileHead(abs, 65_536);
-      blob = await fileBlob(abs);
-    } catch {
+      head = await readFileHead(abs, 65_536, { ...(roots ? { allowedRoots: roots } : {}) });
+      blob = await fileBlob(abs, { ...(roots ? { allowedRoots: roots } : {}) });
+    } catch (e) {
+      if (roots && /outside the allowed directories/.test(String(e))) {
+        throw new McpToolError(`Refusing to upload "${input.path}": it is outside the allowed upload directories.`, {
+          hint: 'EVITE_UPLOAD_DIR restricts which directories photos can be uploaded from — move the photo into one of them, or change EVITE_UPLOAD_DIR.',
+        });
+      }
       throw new Error(`Cannot read image file: ${input.path}`);
     }
     const sniffed = sniffImageMime(head);

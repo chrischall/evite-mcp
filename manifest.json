@@ -36,7 +36,8 @@
       "env": {
         "EVITE_EMAIL": "${user_config.evite_email}",
         "EVITE_PASSWORD": "${user_config.evite_password}",
-        "EVITE_SESSION_COOKIE": "${user_config.evite_session_cookie}"
+        "EVITE_SESSION_COOKIE": "${user_config.evite_session_cookie}",
+        "EVITE_UPLOAD_DIR": "${user_config.evite_upload_dir}"
       }
     }
   },
@@ -60,6 +61,12 @@
       "description": "A raw `cookie:` header copied from a signed-in evite.com tab (alternative to email/password). Used verbatim. Optional.",
       "required": false,
       "sensitive": true
+    },
+    "evite_upload_dir": {
+      "type": "string",
+      "title": "Photo Upload Directory",
+      "description": "Optional. Restrict evite_upload_photo to image files inside this directory (several may be separated by the path delimiter, `:` on macOS/Linux; `~` allowed). A path outside it is refused before anything is read. Unset = any readable image file.",
+      "required": false
     }
   },
   "tools": [

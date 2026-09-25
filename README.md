@@ -51,6 +51,12 @@ The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send
 | `MCP_CONFIRM_TTL_SECONDS` | `600` | How long a token stays valid. |
 | `MCP_CONFIRM_SECRET` | random per process | Signing key; set it only if tokens must survive a server restart. |
 
+## Photo uploads
+
+| variable | default | |
+|---|---|---|
+| `EVITE_UPLOAD_DIR` | unset (any path) | Restrict `evite_upload_photo` to files inside these directories — one or more, separated by the platform path delimiter (`:` on macOS/Linux, `;` on Windows); `~` is allowed. A path that resolves (symlinks included) outside them is refused before any byte is read or uploaded. Recommended, since the model chooses the path. |
+
 ## Architecture
 
 Fetchproxy-archetype MCP. Evite has no public API, so the server calls Evite's *internal* `/services/` web API using your session. `src/auth.ts` resolves that session in priority order:

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/chrischall/evite-mcp/compare/v1.2.0...v1.3.0) (2026-09-25)
+
+
+### Features
+
+* **photos:** confine photo uploads to EVITE_UPLOAD_DIR when set ([#169](https://github.com/chrischall/evite-mcp/issues/169)) ([cb59480](https://github.com/chrischall/evite-mcp/commit/cb59480e1d082c9a86b0ed1abcbf0e73f6bdc716))
+
 ## [1.2.0](https://github.com/chrischall/evite-mcp/compare/v1.1.3...v1.2.0) (2026-09-24)
 
 

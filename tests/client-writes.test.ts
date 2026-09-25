@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { writeFileSync, rmSync } from 'node:fs';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { writeFileSync, rmSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import {
   EviteClient,
   CSRF_HEADER,
@@ -1103,5 +1103,87 @@ describe('cookie/CSRF helpers (pure)', () => {
       expect(out.cookieHeader).toBe('a=1; b=2; csrftoken=new');
       expect(out.csrfToken).toBe('new');
     });
+  });
+});
+
+describe('EviteClient — uploadPhoto confinement (EVITE_UPLOAD_DIR)', () => {
+  const PNG = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([0, 0, 0, 13]),
+    Buffer.from('IHDR'),
+    Buffer.from([0, 0, 0, 3, 0, 0, 0, 2]),
+  ]);
+  let base: string;
+  let allowed: string;
+  let outside: string;
+  const saved = process.env.EVITE_UPLOAD_DIR;
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'evite-confine-'));
+    allowed = join(base, 'allowed');
+    outside = join(base, 'outside');
+    mkdirSync(allowed);
+    mkdirSync(outside);
+    delete process.env.EVITE_UPLOAD_DIR;
+  });
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+    if (saved === undefined) delete process.env.EVITE_UPLOAD_DIR;
+    else process.env.EVITE_UPLOAD_DIR = saved;
+  });
+
+  function successFetch() {
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('/upload/request/')) {
+        return new Response(JSON.stringify({
+          upload_url: 'https://storage.googleapis.com/b',
+          access_url: 'https://cdn/PID',
+          upload_form: { key: 'events/EV/albums/1/PID', policy: 'P', signature: 'S' },
+        }), { status: 200 });
+      }
+      if (u.includes('storage.googleapis.com')) return new Response(null, { status: 204 });
+      if (u.includes('/shared-gallery/')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      throw new Error(`unexpected fetch: ${u}`);
+    });
+  }
+
+  it('refuses a path outside EVITE_UPLOAD_DIR before any byte is read or uploaded', async () => {
+    const path = join(outside, 'photo.png');
+    writeFileSync(path, PNG);
+    process.env.EVITE_UPLOAD_DIR = `${join(base, 'nope')}${delimiter}${allowed}`;
+    const spy = successFetch();
+    const err = await newClient().uploadPhoto('EV', { path, guestId: 'G' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect((err as McpToolError).message).toMatch(/outside the allowed upload directories/);
+    expect((err as McpToolError).hint).toMatch(/EVITE_UPLOAD_DIR/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('uploads a file inside EVITE_UPLOAD_DIR', async () => {
+    const path = join(allowed, 'photo.png');
+    writeFileSync(path, PNG);
+    process.env.EVITE_UPLOAD_DIR = allowed;
+    const spy = successFetch();
+    const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+    expect(result.photoId).toBe('PID');
+    expect(spy.mock.calls.some(([u]) => String(u).includes('storage.googleapis.com'))).toBe(true);
+  });
+
+  it('a missing file inside EVITE_UPLOAD_DIR still fails as an unreadable image', async () => {
+    process.env.EVITE_UPLOAD_DIR = allowed;
+    const spy = successFetch();
+    await expect(
+      newClient().uploadPhoto('EV', { path: join(allowed, 'missing.png'), guestId: 'G' }),
+    ).rejects.toThrow(/Cannot read image file/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('unset EVITE_UPLOAD_DIR leaves uploads unconfined (unchanged behaviour)', async () => {
+    const path = join(outside, 'photo.png');
+    writeFileSync(path, PNG);
+    successFetch();
+    const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+    expect(result.photoId).toBe('PID');
   });
 });

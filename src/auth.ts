@@ -86,7 +86,7 @@ function notAuthed(): never {
     'No Evite session. Set EVITE_EMAIL + EVITE_PASSWORD (recommended), or ' +
     'EVITE_SESSION_COOKIE (a raw cookie header from a signed-in evite.com tab). ' +
     'The browser-bridge fallback needs both a signed-in evite.com tab and a ' +
-    'reachable fetchproxy bridge (unavailable in sandboxed hosts).';
+    'connected ContextMint Bridge browser extension (unavailable in sandboxed hosts).';
   throw err;
 }
 

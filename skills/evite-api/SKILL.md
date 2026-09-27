@@ -20,7 +20,7 @@ plain CSRF-protected Django form POST, and reads/writes with the
 resulting cookies are **not** bot-walled (Cloudflare sits in front but
 doesn't trip on a plain `curl`/Node request carrying a valid session) —
 so the whole flow runs server-side with a cookie jar. No signed-in
-browser tab, no Transporter extension, no bridge.
+browser tab, no ContextMint Bridge extension, no bridge.
 
 Auth model: session cookies `x-evite-session` + `evtsession`, plus a
 CSRF cookie `csrftoken` sent back as the `X-CSRFToken` header on every

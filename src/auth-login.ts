@@ -67,7 +67,7 @@ export interface PasswordLoginResult {
 
 /** The hint for a failed login — points the user at the credential env vars. */
 const BAD_CREDENTIALS_HINT =
-  'Login to Evite failed. Check EVITE_EMAIL / EVITE_PASSWORD, or set EVITE_SESSION_COOKIE / use the fetchproxy browser bridge instead.';
+  'Login to Evite failed. Check EVITE_EMAIL / EVITE_PASSWORD, or set EVITE_SESSION_COOKIE / use the ContextMint Bridge browser extension instead.';
 
 /**
  * Evite rejected the email/password outright (`401 "Invalid Email Address /

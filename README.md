@@ -63,7 +63,7 @@ Fetchproxy-archetype MCP. Evite has no public API, so the server calls Evite's *
 
 1. **`EVITE_EMAIL` + `EVITE_PASSWORD`** (tier-1, preferred) — headless email/password form login: POST the creds to `https://www.evite.com/ajax_login`, then build the session from the response `Set-Cookie` jar (`x-evite-session`, `evtsession`, `csrftoken`, `x-evite-features`). No browser bridge, no hand-copied cookie. Both vars must be set, or the resolver falls through. *(Live.)*
 2. **`EVITE_SESSION_COOKIE`** — a raw `cookie:` header copied from a signed-in `evite.com` tab (or set in CI). Used verbatim. *(Live.)*
-3. **Fetchproxy bootstrap** (fallback) — lift the session cookies (`x-evite-session`, `evtsession`, `x-evite-features`, `csrftoken`) from a signed-in `evite.com` browser tab via `@fetchproxy/bootstrap`. Bootstrap runs once; every API call then goes out via plain Node `fetch()` with the cookies attached. Opt out with `EVITE_DISABLE_FETCHPROXY=1`. *(Live.)*
+3. **Fetchproxy bootstrap** (fallback) — lift the session cookies (`x-evite-session`, `evtsession`, `x-evite-features`, `csrftoken`) from a signed-in `evite.com` browser tab via `@fetchproxy/bootstrap`, which needs the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) browser extension (Chrome: load the chrome zip from the releases page unpacked; Safari: ships inside the ContextMint app). Bootstrap runs once; every API call then goes out via plain Node `fetch()` with the cookies attached. Opt out with `EVITE_DISABLE_FETCHPROXY=1`. *(Live.)*
 
 One tier is intentionally **deferred** (the resolver is shaped to slot it in):
 

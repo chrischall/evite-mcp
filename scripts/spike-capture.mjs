@@ -87,7 +87,7 @@ async function main() {
     session = await liftSession();
   } catch (e) {
     console.error(`BRIDGE UNAVAILABLE: ${e.message}`);
-    console.error('Open a signed-in evite.com tab with the fetchproxy extension connected, then retry.');
+    console.error('Open a signed-in evite.com tab with the ContextMint Bridge extension connected, then retry.');
     process.exit(1);
   }
 

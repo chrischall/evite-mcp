@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1](https://github.com/chrischall/evite-mcp/compare/v1.3.0...v1.3.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **deps:** move to [@fetchproxy](https://github.com/fetchproxy) 3.4 for ContextMint Bridge errors, capability subsets and managed pins ([#171](https://github.com/chrischall/evite-mcp/issues/171)) ([ff7010d](https://github.com/chrischall/evite-mcp/commit/ff7010d384b5cf0665b976bc2ee8ba5985d72857))
+* **deps:** move to @chrischall/mcp-utils 2.8 and [@fetchproxy](https://github.com/fetchproxy) 3.4.1 for clearer browser-bridge errors ([#173](https://github.com/chrischall/evite-mcp/issues/173)) ([b866066](https://github.com/chrischall/evite-mcp/commit/b866066888c9fec37640bdbe3198b1497b015adc))
+
 ## [1.3.0](https://github.com/chrischall/evite-mcp/compare/v1.2.0...v1.3.0) (2026-09-25)
 
 

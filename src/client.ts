@@ -359,6 +359,18 @@ export interface EviteClientOptions {
 }
 
 /**
+ * The CDN/WAF vendor whose refusal page {@link res} is, or `null` (also when the
+ * body cannot be read). Reads a clone, so the caller's copy stays readable.
+ */
+async function edgeVendorOf(res: Response): Promise<string | null> {
+  const body = await res
+    .clone()
+    .text()
+    .catch(() => '');
+  return detectEdgeBlock({ body, headers: res.headers, status: res.status })?.vendor ?? null;
+}
+
+/**
  * Authenticated HTTP client over Evite's internal `/services/` API.
  *
  * Construction never touches the network or credentials — the session is
@@ -405,6 +417,7 @@ export class EviteClient {
       // "go sign in". Surface the actionable causes instead.
       onReplayLoginError: (err) => {
         if (
+          err instanceof EdgeBlockedError ||
           err instanceof InvalidCredentialsError ||
           err instanceof RateLimitError ||
           err instanceof UnreachableError
@@ -478,7 +491,13 @@ export class EviteClient {
     path: string,
     probe = false,
   ): Promise<void> {
-    if (res.status === 401) throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    if (res.status === 401) {
+      // A CDN/WAF refusal page can answer 401 too (chrischall/mcp-host#1015):
+      // nothing judged the session, so report the block, not "go sign in".
+      const vendor = await edgeVendorOf(res);
+      if (vendor) throw new EdgeBlockedError(401, vendor, { service: 'Evite', method, path });
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
     if (res.status !== 403) return;
     const kind = await this.classify403(res, probe);
     if (kind === 'edge') {

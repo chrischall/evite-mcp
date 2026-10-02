@@ -298,6 +298,18 @@ describe('EviteClient — 401 edge block (mcp-host#1015)', () => {
     expect(err).toBeInstanceOf(SessionNotAuthenticatedError);
     expect(err).not.toBeInstanceOf(EdgeBlockedError);
   });
+
+  it('control: a genuine 401 costs exactly one re-login and one replay', async () => {
+    const spy = mockFetch(
+      { status: 401, rawBody: '{"detail":"Authentication credentials were not provided."}' },
+      { status: 401, rawBody: '{"detail":"Authentication credentials were not provided."}' },
+    );
+    const resolver = vi.fn(async () => fakeSession);
+    const err = await new EviteClient({ resolveSession: resolver }).getEvent('X').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(resolver).toHaveBeenCalledTimes(2); // initial login + exactly one re-login
+    expect(spy).toHaveBeenCalledTimes(2); // original + exactly one replay
+  });
 });
 
 describe('EviteClient — read re-login on expiry', () => {

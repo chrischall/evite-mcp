@@ -382,7 +382,7 @@ export class EviteClient {
    * The session lifecycle (single-flight login, clear-on-settle, and the
    * exactly-one re-login-and-replay on a genuine expiry) lives in the shared
    * {@link CookieSessionManager} — `login` is the injected resolver, and
-   * `isExpired` flags a 401 — or a 403 that {@link classify403} judges to be a
+   * `isExpired` flags a 401 that is not a CDN/WAF refusal page — or a 403 that {@link classify403} judges to be a
    * dead session rather than a refusal — as a true expiry (the re-login trigger).
    * The CSRF-rotation tier stays evite-local in {@link write} (see there).
    */
@@ -407,7 +407,10 @@ export class EviteClient {
       // not cost a password re-login per call (fleet-audit #100).
       isExpired: async (res) => {
         if (isCsrfRecovered(res)) return false;
-        if (res.status === 401) return true;
+        // A 401 CDN/WAF refusal page never reached Evite: nothing judged the
+        // session, so it is not an expiry — no re-login, no replay
+        // (chrischall/mcp-host#1015; mirrors classify403's 'edge' kind).
+        if (res.status === 401) return (await edgeVendorOf(res)) === null;
         return res.status === 403 && (await this.classify403(res, true)) === 'expired';
       },
       // Evite rejecting the email/password outright can never succeed on a retry

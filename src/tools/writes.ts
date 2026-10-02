@@ -1,10 +1,10 @@
-import type { McpServer, ServerContext } from '@modelcontextprotocol/server';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
-  confirmationFromEnv,
+  CONFIRM_FLOW_SENTENCE,
   confirmTokenParam,
+  confirmWrite,
   minifiedResult,
-  requireConfirmationWithFallback,
   toolAnnotations,
 } from '@chrischall/mcp-utils';
 import { statSync } from 'node:fs';
@@ -32,53 +32,6 @@ import { IMAGE_MIMETYPES } from '../image-meta.js';
 // than an evite.com endpoint — `evite_send_message` now performs that push over
 // RTDB's REST API (see EviteClient.sendMessage).
 // ────────────────────────────────────────────────────────────────────────────
-
-/** The sentence every write tool's description ends with. */
-const CONFIRM_NOTE =
-  'Asks the user to confirm first: a confirmation prompt where the client supports one; ' +
-  'otherwise the first call returns a preview and a confirmToken, and only a repeat call ' +
-  'with that token proceeds (see MCP_CONFIRM_MODE).';
-
-interface WriteGate {
-  /** The tool name the token is bound to. */
-  tool: string;
-  /** `evite.<verb>`. */
-  action: string;
-  /** Prompt text shown above the preview. */
-  message: string;
-  /** The primary id acted on ('' for a create). */
-  target: string;
-  /** Exactly what the client write will receive — hashed into the token. */
-  payload: unknown;
-  /** The values shown to the user (the tool's own argument names). */
-  wouldSend: Record<string, unknown>;
-  /** Optional warning shown with the preview. */
-  caveat?: string;
-}
-
-/**
- * Gate a write on the user's confirmation. `undefined` means proceed; anything
- * else is the result to return unchanged (a prompt, a phase-1 preview + token,
- * or a refusal). Call it on EVERY invocation with the freshly-built payload, so
- * a change between the preview and the token call is refused as DRAFT_CHANGED.
- */
-function confirmWrite(ctx: ServerContext, confirmToken: string | undefined, gate: WriteGate) {
-  const preview: Record<string, unknown> = {
-    wouldSend: gate.wouldSend,
-    ...(gate.caveat ? { caveat: gate.caveat } : {}),
-  };
-  return requireConfirmationWithFallback(
-    ctx,
-    confirmationFromEnv({
-      action: gate.action,
-      message: gate.message,
-      details: preview,
-      tool: gate.tool,
-      confirmToken,
-      subject: () => ({ target: gate.target, payload: gate.payload, preview }),
-    }),
-  );
-}
 
 const rsvpArgs = z.object({
   event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
@@ -192,7 +145,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_rsvp',
     {
-      description: `RSVP for a guest on an Evite event. ${CONFIRM_NOTE}`,
+      description: `RSVP for a guest on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false, destructive: true }),
       inputSchema: rsvpArgs,
     },
@@ -203,13 +156,14 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         numberOfKids: args.number_of_kids,
         note: args.note,
       };
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_rsvp',
+        account: undefined,
         action: 'evite.rsvp',
         message: 'Review and confirm this RSVP:',
         target: args.event_id,
         payload: { eventId: args.event_id, guestId: args.guest_id, rsvp },
-        wouldSend: {
+        willSend: {
           event_id: args.event_id,
           guest_id: args.guest_id,
           response: args.response,
@@ -217,6 +171,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
           number_of_kids: args.number_of_kids,
           note: args.note,
         },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.rsvp(args.event_id, args.guest_id, rsvp);
@@ -230,21 +185,25 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Send a private message to one Evite event guest. This really notifies the guest. ' +
         'Sent as the event host (Evite delivers per-guest chat over Firebase, not REST), so ' +
-        `only a host can use it. ${CONFIRM_NOTE}`,
+        `only a host can use it. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false, destructive: true }),
       inputSchema: sendMessageArgs,
     },
     async (args, ctx) => {
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_send_message',
+        account: undefined,
         action: 'evite.send_message',
         message: 'Review and confirm this message to a guest:',
         target: args.event_id,
         payload: { eventId: args.event_id, guestId: args.guest_id, message: args.message },
-        wouldSend: { event_id: args.event_id, guest_id: args.guest_id, message: args.message },
-        caveat:
-          'Delivered as a Firebase RTDB push (Evite has no REST endpoint for per-guest chat); ' +
-          'sent as the event host.',
+        willSend: { event_id: args.event_id, guest_id: args.guest_id, message: args.message },
+        preview: {
+          caveat:
+            'Delivered as a Firebase RTDB push (Evite has no REST endpoint for per-guest chat); ' +
+            'sent as the event host.',
+        },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.sendMessage(args.event_id, args.guest_id, { message: args.message });
@@ -257,7 +216,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Broadcast a message to whole RSVP segments of an Evite event at once (e.g. everyone ' +
-        `who replied yes/maybe). This really emails every guest in those segments. ${CONFIRM_NOTE}`,
+        `who replied yes/maybe). This really emails every guest in those segments. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false, destructive: true }),
       inputSchema: broadcastArgs,
     },
@@ -267,18 +226,20 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         groups: args.groups,
         participantCount: args.participant_count,
       };
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_broadcast',
+        account: undefined,
         action: 'evite.broadcast',
         message: 'Review and confirm this broadcast (it emails every guest in these segments):',
         target: args.event_id,
         payload: { eventId: args.event_id, ...body },
-        wouldSend: {
+        willSend: {
           event_id: args.event_id,
           message: args.message,
           groups: args.groups,
           participant_count: args.participant_count,
         },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.broadcast(args.event_id, body);
@@ -291,7 +252,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         "Upload a local image to an Evite event's shared photo gallery. This really adds the " +
-        `photo to the event album. Needs your guest_id on the event (from evite_list_guests). ${CONFIRM_NOTE}`,
+        `photo to the event album. Needs your guest_id on the event (from evite_list_guests). ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false, destructive: false }),
       inputSchema: uploadPhotoArgs,
     },
@@ -311,13 +272,14 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         mtimeMs = undefined;
       }
       const upload = { path: args.path, guestId: args.guest_id, mimetype: args.mimetype };
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_upload_photo',
+        account: undefined,
         action: 'evite.upload_photo',
         message: 'Review and confirm this photo upload:',
         target: args.event_id,
         payload: { eventId: args.event_id, ...upload, resolvedPath: resolved, sizeBytes: size, mtimeMs },
-        wouldSend: {
+        willSend: {
           event_id: args.event_id,
           guest_id: args.guest_id,
           path: args.path,
@@ -325,6 +287,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
           size_bytes: size,
           mimetype: args.mimetype,
         },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.uploadPhoto(args.event_id, upload);
@@ -337,7 +300,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Create an Evite event (as a draft). Requires title, start_datetime, and template_name. ' +
-        `${CONFIRM_NOTE} ` +
+        `${CONFIRM_FLOW_SENTENCE} ` +
         'Evite answers a create with a 500 even when the draft IS created; this tool handles that ' +
         'by re-listing your drafts, and returns created:true with the eventId, or created:"unknown" ' +
         'when it cannot confirm — never call it again for the same event; check the drafts instead.',
@@ -352,22 +315,26 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         endDatetime: args.end_datetime,
         message: args.message,
       };
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_create_event',
+        account: undefined,
         action: 'evite.create_event',
         message: 'Review and confirm this new event draft:',
         target: '',
         payload: input,
-        wouldSend: {
+        willSend: {
           title: args.title,
           start_datetime: args.start_datetime,
           template_name: args.template_name,
           end_datetime: args.end_datetime,
           message: args.message,
         },
-        caveat:
-          'Evite answers a create with a 500 even on success; the tool confirms the new draft ' +
-          'itself, so run it once and do not retry.',
+        preview: {
+          caveat:
+            'Evite answers a create with a 500 even on success; the tool confirms the new draft ' +
+            'itself, so run it once and do not retry.',
+        },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.createEvent(input);
@@ -378,7 +345,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_update_event',
     {
-      description: `Edit an existing Evite event (only the fields you pass change). ${CONFIRM_NOTE}`,
+      description: `Edit an existing Evite event (only the fields you pass change). ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: false }),
       inputSchema: updateEventArgs,
     },
@@ -394,13 +361,15 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         throw new Error('evite_update_event: provide at least one field to change.');
       }
 
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_update_event',
+        account: undefined,
         action: 'evite.update_event',
         message: 'Review and confirm these event changes:',
         target: args.event_id,
         payload: { eventId: args.event_id, patch },
-        wouldSend: { event_id: args.event_id, patch },
+        willSend: { event_id: args.event_id, patch },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.updateEvent(args.event_id, patch);
@@ -413,19 +382,21 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         "Add guests to an event's draft (un-sent) guest list. Nothing is emailed until you " +
-        `evite_send. ${CONFIRM_NOTE} ` +
+        `evite_send. ${CONFIRM_FLOW_SENTENCE} ` +
         'NB: guests only persist on a finalized (sent/sending) event, not a bare new draft.',
       annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false, destructive: false }),
       inputSchema: addGuestArgs,
     },
     async (args, ctx) => {
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_add_guest',
+        account: undefined,
         action: 'evite.add_guest',
         message: 'Review and confirm these guests to add:',
         target: args.event_id,
         payload: { eventId: args.event_id, guests: args.guests },
-        wouldSend: { event_id: args.event_id, guests: args.guests },
+        willSend: { event_id: args.event_id, guests: args.guests },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.addGuest(args.event_id, args.guests);
@@ -436,25 +407,27 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_update_guest',
     {
-      description: `Edit a draft (un-sent) guest's name/email/phone on an Evite event. ${CONFIRM_NOTE}`,
+      description: `Edit a draft (un-sent) guest's name/email/phone on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: false }),
       inputSchema: updateGuestArgs,
     },
     async (args, ctx) => {
       const guest = { name: args.name, email: args.email, phone: args.phone };
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_update_guest',
+        account: undefined,
         action: 'evite.update_guest',
         message: 'Review and confirm this guest edit:',
         target: args.guest_id,
         payload: { eventId: args.event_id, guestId: args.guest_id, guest },
-        wouldSend: {
+        willSend: {
           event_id: args.event_id,
           guest_id: args.guest_id,
           name: args.name,
           email: args.email,
           phone: args.phone,
         },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.updateGuest(args.event_id, args.guest_id, guest);
@@ -465,18 +438,20 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_remove_guest',
     {
-      description: `Remove a draft (un-sent) guest from an Evite event. ${CONFIRM_NOTE}`,
+      description: `Remove a draft (un-sent) guest from an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Remove an Evite guest', readOnly: false, destructive: false }),
       inputSchema: removeGuestArgs,
     },
     async (args, ctx) => {
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_remove_guest',
+        account: undefined,
         action: 'evite.remove_guest',
         message: 'Review and confirm removing this guest:',
         target: args.guest_id,
         payload: { eventId: args.event_id, guestId: args.guest_id },
-        wouldSend: { event_id: args.event_id, guest_id: args.guest_id },
+        willSend: { event_id: args.event_id, guest_id: args.guest_id },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.removeGuest(args.event_id, args.guest_id);
@@ -489,19 +464,23 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Send the invitation to the ready-to-send (draft) guests of an event ("Send now"). ' +
-        `THIS EMAILS GUESTS. ${CONFIRM_NOTE}`,
+        `THIS EMAILS GUESTS. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false, destructive: true }),
       inputSchema: eventIdArgs,
     },
     async (args, ctx) => {
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_send',
+        account: undefined,
         action: 'evite.send',
         message: 'Review and confirm sending this invitation (it emails guests):',
         target: args.event_id,
         payload: { eventId: args.event_id },
-        wouldSend: { event_id: args.event_id },
-        caveat: 'THIS EMAILS the event’s ready-to-send guests. Sends no request body (source-verified).',
+        willSend: { event_id: args.event_id },
+        preview: {
+          caveat: 'THIS EMAILS the event’s ready-to-send guests. Sends no request body (source-verified).',
+        },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.sendInvitation(args.event_id);
@@ -514,7 +493,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Cancel an Evite event (also used to delete a draft). DESTRUCTIVE — may send a ' +
-        `cancellation notice to guests; reversible with evite_reinstate_event. ${CONFIRM_NOTE}`,
+        `cancellation notice to guests; reversible with evite_reinstate_event. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({
         title: 'Cancel an Evite event',
         readOnly: false,
@@ -524,14 +503,18 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       inputSchema: eventIdArgs,
     },
     async (args, ctx) => {
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_cancel_event',
+        account: undefined,
         action: 'evite.cancel_event',
         message: 'Review and confirm cancelling this event:',
         target: args.event_id,
         payload: { eventId: args.event_id },
-        wouldSend: { event_id: args.event_id },
-        caveat: 'DESTRUCTIVE — cancels the event and may notify guests (reverse with evite_reinstate_event).',
+        willSend: { event_id: args.event_id },
+        preview: {
+          caveat: 'DESTRUCTIVE — cancels the event and may notify guests (reverse with evite_reinstate_event).',
+        },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.cancelEvent(args.event_id);
@@ -543,7 +526,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_reinstate_event',
     {
       description:
-        `Reinstate a previously-cancelled Evite event (the inverse of evite_cancel_event). ${CONFIRM_NOTE}`,
+        `Reinstate a previously-cancelled Evite event (the inverse of evite_cancel_event). ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({
         title: 'Reinstate an Evite event',
         readOnly: false,
@@ -553,13 +536,15 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       inputSchema: eventIdArgs,
     },
     async (args, ctx) => {
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_reinstate_event',
+        account: undefined,
         action: 'evite.reinstate_event',
         message: 'Review and confirm reinstating this event:',
         target: args.event_id,
         payload: { eventId: args.event_id },
-        wouldSend: { event_id: args.event_id },
+        willSend: { event_id: args.event_id },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.reinstateEvent(args.event_id);
@@ -572,18 +557,20 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Duplicate an Evite event into a fresh draft (the "Duplicate event" action). Returns the ' +
-        `new draft event id. ${CONFIRM_NOTE}`,
+        `new draft event id. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false, destructive: false }),
       inputSchema: eventIdArgs,
     },
     async (args, ctx) => {
-      const gate = await confirmWrite(ctx, args.confirmToken, {
+      const gate = await confirmWrite(ctx, {
         tool: 'evite_duplicate_event',
+        account: undefined,
         action: 'evite.duplicate_event',
         message: 'Review and confirm duplicating this event:',
         target: args.event_id,
         payload: { eventId: args.event_id },
-        wouldSend: { event_id: args.event_id },
+        willSend: { event_id: args.event_id },
+        confirmToken: args.confirmToken,
       });
       if (gate) return gate;
       const data = await client.duplicateEvent(args.event_id);

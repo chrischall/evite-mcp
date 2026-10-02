@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CONFIRM_FLOW_SENTENCE } from '@chrischall/mcp-utils';
 import { createTestHarness, parseToolResult, type TestHarnessOptions } from '@chrischall/mcp-utils/test';
 import type { EviteClient } from '../src/client.js';
 import { registerWriteTools } from '../src/tools/writes.js';
@@ -62,7 +63,7 @@ interface PhaseOne {
   status: string;
   action: string;
   confirmToken: string;
-  preview: { wouldSend: Record<string, unknown>; caveat?: string };
+  preview: { willSend: Record<string, unknown>; caveat?: string };
 }
 
 /** Phase 1: no token — returns the preview and a confirmToken, writes nothing. */
@@ -129,6 +130,8 @@ describe('write tool registration', () => {
       const props = (t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
       expect(props).not.toHaveProperty('confirm');
       expect(props).toHaveProperty('confirmToken');
+      // The shared kit's flow sentence (mcp-utils confirmWrite), not a local copy.
+      expect(t.description).toContain(CONFIRM_FLOW_SENTENCE);
     }
     await h.close();
   });
@@ -152,7 +155,7 @@ describe('evite_rsvp', () => {
     expect(client.rsvp).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(p1.action).toBe('evite.rsvp');
-    expect(p1.preview.wouldSend).toEqual(args);
+    expect(p1.preview.willSend).toEqual(args);
     await h.close();
   });
 
@@ -205,7 +208,7 @@ describe('evite_send_message', () => {
     const p1 = await phaseOne(h, 'evite_send_message', args);
     expect(client.sendMessage).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual(args);
+    expect(p1.preview.willSend).toEqual(args);
     // Issue #3: delivery is a Firebase RTDB push, not a REST call — the preview
     // says so, but it is a real send once confirmed.
     expect(p1.preview.caveat).toMatch(/rtdb|firebase/i);
@@ -237,7 +240,7 @@ describe('evite_broadcast', () => {
     const p1 = await phaseOne(h, 'evite_broadcast', args);
     expect(client.broadcast).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual(args);
+    expect(p1.preview.willSend).toEqual(args);
     await h.close();
   });
 
@@ -267,7 +270,7 @@ describe('evite_upload_photo', () => {
     });
     expect(client.uploadPhoto).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend.path).toBe('~/Pictures/cake.jpg');
+    expect(p1.preview.willSend.path).toBe('~/Pictures/cake.jpg');
     await h.close();
   });
 
@@ -279,16 +282,16 @@ describe('evite_upload_photo', () => {
     try {
       const h = await harnessFor(fakeClient());
       const p1 = await phaseOne(h, 'evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
-      expect(p1.preview.wouldSend.resolved_path).toBe(file);
-      expect(p1.preview.wouldSend.size_bytes).toBe(1234);
+      expect(p1.preview.willSend.resolved_path).toBe(file);
+      expect(p1.preview.willSend.size_bytes).toBe(1234);
       // A ~ path resolves against the home directory; a missing file has no size.
       const p2 = await phaseOne(h, 'evite_upload_photo', {
         event_id: 'E',
         guest_id: 'G',
         path: '~/evite-mcp-no-such-file.png',
       });
-      expect(p2.preview.wouldSend.resolved_path).toBe(join(homedir(), 'evite-mcp-no-such-file.png'));
-      expect(p2.preview.wouldSend.size_bytes).toBeUndefined();
+      expect(p2.preview.willSend.resolved_path).toBe(join(homedir(), 'evite-mcp-no-such-file.png'));
+      expect(p2.preview.willSend.size_bytes).toBeUndefined();
       await h.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -385,7 +388,7 @@ describe('evite_create_event', () => {
     const p1 = await phaseOne(h, 'evite_create_event', args);
     expect(client.createEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual(args);
+    expect(p1.preview.willSend).toEqual(args);
     // create returns a 500 even on success — the preview should warn about that
     expect(p1.preview.caveat).toMatch(/500/i);
     await h.close();
@@ -415,7 +418,7 @@ describe('evite_update_event', () => {
     const p1 = await phaseOne(h, 'evite_update_event', { event_id: 'EVENTID0', title: 'Renamed' });
     expect(client.updateEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0', patch: { title: 'Renamed' } });
+    expect(p1.preview.willSend).toEqual({ event_id: 'EVENTID0', patch: { title: 'Renamed' } });
     await h.close();
   });
 
@@ -463,7 +466,7 @@ describe('evite_add_guest', () => {
     const p1 = await phaseOne(h, 'evite_add_guest', { event_id: 'EVENTID0', guests });
     expect(client.addGuest).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0', guests });
+    expect(p1.preview.willSend).toEqual({ event_id: 'EVENTID0', guests });
     await h.close();
   });
 
@@ -487,7 +490,7 @@ describe('evite_update_guest', () => {
     const p1 = await phaseOne(h, 'evite_update_guest', args);
     expect(client.updateGuest).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual(args);
+    expect(p1.preview.willSend).toEqual(args);
     await h.close();
   });
 
@@ -513,7 +516,7 @@ describe('evite_remove_guest', () => {
     const p1 = await phaseOne(h, 'evite_remove_guest', { event_id: 'EV', guest_id: 'G' });
     expect(client.removeGuest).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual({ event_id: 'EV', guest_id: 'G' });
+    expect(p1.preview.willSend).toEqual({ event_id: 'EV', guest_id: 'G' });
     await h.close();
   });
 
@@ -535,7 +538,7 @@ describe('evite_send', () => {
     const p1 = await phaseOne(h, 'evite_send', { event_id: 'EVENTID0' });
     expect(client.sendInvitation).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0' });
+    expect(p1.preview.willSend).toEqual({ event_id: 'EVENTID0' });
     expect(p1.preview.caveat).toMatch(/email/i);
     await h.close();
   });
@@ -580,7 +583,7 @@ describe('evite_reinstate_event', () => {
     const p1 = await phaseOne(h, 'evite_reinstate_event', { event_id: 'EV' });
     expect(client.reinstateEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual({ event_id: 'EV' });
+    expect(p1.preview.willSend).toEqual({ event_id: 'EV' });
     await h.close();
   });
 
@@ -602,7 +605,7 @@ describe('evite_duplicate_event', () => {
     const p1 = await phaseOne(h, 'evite_duplicate_event', { event_id: 'EVENTID0' });
     expect(client.duplicateEvent).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.wouldSend).toEqual({ event_id: 'EVENTID0' });
+    expect(p1.preview.willSend).toEqual({ event_id: 'EVENTID0' });
     await h.close();
   });
 
@@ -643,7 +646,7 @@ describe('confirmation token rules', () => {
     expect(res.isError).toBe(true);
     const body = parseToolResult(res) as { error: string; preview: PhaseOne['preview'] };
     expect(body.error).toBe('DRAFT_CHANGED');
-    expect(body.preview.wouldSend.message).toBe('something else entirely');
+    expect(body.preview.willSend.message).toBe('something else entirely');
     expect(client.sendMessage).not.toHaveBeenCalled();
     await h.close();
   });

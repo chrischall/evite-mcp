@@ -3,6 +3,8 @@ import { basename, resolve } from 'node:path';
 import {
   buildQueryString,
   CookieJar,
+  detectEdgeBlock,
+  EdgeBlockedError,
   fileBlob,
   formatApiError,
   McpToolError,
@@ -71,7 +73,7 @@ function isCsrfRecovered(res: Response): boolean {
  * may not touch this resource (someone else's event, a host-only action by a
  * guest). Only the first warrants a password re-login (fleet-audit #100).
  */
-type ForbiddenKind = 'expired' | 'forbidden';
+type ForbiddenKind = 'expired' | 'forbidden' | 'edge';
 
 /**
  * A 403 body that names authentication (DRF's "Authentication credentials were
@@ -415,6 +417,8 @@ export class EviteClient {
 
   /** Classification cache: a response is classified at most once. */
   private readonly forbiddenKinds = new WeakMap<Response, ForbiddenKind>();
+  /** The edge vendor behind a 403 {@link classify403} called `'edge'`. */
+  private readonly edgeVendors = new WeakMap<Response, string>();
 
   /**
    * Decide whether a 403 means an expired session or a refusal on a live one.
@@ -432,7 +436,14 @@ export class EviteClient {
       .text()
       .catch(() => '');
     let kind: ForbiddenKind = 'forbidden';
-    if (AUTH_403_BODY.test(body)) {
+    // A CDN/WAF refusal page answers 403 before Evite sees the cookie
+    // (chrischall/mcp-host#1015). Not an expiry: probing (also blocked) would
+    // call it one, and the re-login it triggers clears the cached session.
+    const edge = detectEdgeBlock({ body, headers: res.headers, status: res.status });
+    if (edge) {
+      kind = 'edge';
+      this.edgeVendors.set(res, edge.vendor);
+    } else if (AUTH_403_BODY.test(body)) {
       kind = 'expired';
     } else if (probe) {
       kind = await this.probeSession(this.sessions.current);
@@ -469,7 +480,11 @@ export class EviteClient {
   ): Promise<void> {
     if (res.status === 401) throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
     if (res.status !== 403) return;
-    if ((await this.classify403(res, probe)) === 'expired') {
+    const kind = await this.classify403(res, probe);
+    if (kind === 'edge') {
+      throw new EdgeBlockedError(403, this.edgeVendors.get(res)!, { service: 'Evite', method, path });
+    }
+    if (kind === 'expired') {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
     }
     throw forbiddenError(method, path);

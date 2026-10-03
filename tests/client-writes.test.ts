@@ -8,7 +8,7 @@ import {
   freshCsrfFromResponse,
   withFreshCsrf,
 } from '../src/client.js';
-import { McpToolError, SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
+import { EdgeBlockedError, McpToolError, SessionNotAuthenticatedError } from '@chrischall/mcp-utils';
 
 /**
  * Stub `fetch` with a queue of responses. Returns the spy.
@@ -91,6 +91,36 @@ describe('EviteClient — rsvp', () => {
     await expect(
       client.rsvp('E', 'G', { response: 'yes', numberOfAdults: 1, numberOfKids: 0 }),
     ).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+  });
+
+  // chrischall/mcp-host#1015: a Cloudflare challenge served as a 401 never
+  // reached Evite — report the block, keep the session, spend no re-login.
+  it('maps a 401 Cloudflare challenge page to EdgeBlockedError, with no re-login', async () => {
+    const CHALLENGE =
+      '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>' +
+      '<meta http-equiv="refresh" content="390"></head><body>' +
+      '<div class="main-wrapper" role="main"><div class="main-content">' +
+      '<noscript>Enable JavaScript and cookies to continue</noscript></div></div>' +
+      '<script>(function(){window._cf_chl_opt={cvId: \'3\',cZone: "www.evite.com",cType: \'managed\'};' +
+      'var a=document.createElement(\'script\');a.src=\'/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1\';' +
+      '}());</script></body></html>';
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(CHALLENGE, {
+          status: 401,
+          headers: { 'content-type': 'text/html; charset=UTF-8', 'cf-mitigated': 'challenge', server: 'cloudflare' },
+        }),
+    );
+    const resolver = vi.fn(async () => fakeSession);
+    const client = new EviteClient({ resolveSession: resolver });
+    const err = await client
+      .rsvp('E', 'G', { response: 'yes', numberOfAdults: 1, numberOfKids: 0 })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EdgeBlockedError);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+    expect((err as EdgeBlockedError).vendor).toBe('Cloudflare');
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
 

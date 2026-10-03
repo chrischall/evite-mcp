@@ -29,6 +29,8 @@
 
 import {
   CookieJar,
+  detectEdgeBlock,
+  EdgeBlockedError,
   RateLimitError,
   SessionNotAuthenticatedError,
   UnreachableError,
@@ -94,6 +96,25 @@ function badCredentials(): never {
   throw err;
 }
 
+/**
+ * Throw {@link EdgeBlockedError} when a non-2xx {@link response} is a CDN/WAF
+ * refusal page (chrischall/mcp-host#1015). Such a page never reached Evite, so it
+ * says nothing about the email/password — mapping it to
+ * {@link InvalidCredentialsError} would be cached as permanent and stop every
+ * later login until restart. An unreadable body is "not shown to be a block".
+ */
+async function throwIfEdgeBlocked(response: Response, method: string, path: string): Promise<void> {
+  if (response.ok) return;
+  let body = '';
+  try {
+    body = await response.clone().text();
+  } catch {
+    // unreadable (or a minimal stub): judge on headers alone
+  }
+  const edge = detectEdgeBlock({ body, headers: response.headers, status: response.status });
+  if (edge) throw new EdgeBlockedError(response.status, edge.vendor, { service: 'Evite', method, path });
+}
+
 /** Seconds from a `Retry-After` header given as delta-seconds, when usable. */
 function retryAfterSeconds(response: Response): number | undefined {
   const n = Number.parseInt(response.headers.get('retry-after') ?? '', 10);
@@ -135,8 +156,10 @@ export async function loginWithPassword(
       method: 'GET',
       headers: { 'User-Agent': USER_AGENT },
     });
+    await throwIfEdgeBlocked(prime, 'GET', '/');
     primed.absorb(prime.headers);
-  } catch {
+  } catch (err) {
+    if (err instanceof EdgeBlockedError) throw err;
     badCredentials();
   }
   const csrf = primed.get(CSRF_COOKIE);
@@ -164,6 +187,7 @@ export async function loginWithPassword(
   // Only a 401 means the credentials are wrong. A 429 / 5xx is Evite being busy
   // or down — naming EVITE_PASSWORD for those would send the user after the
   // wrong problem (fleet-audit #100).
+  await throwIfEdgeBlocked(response, 'POST', '/ajax_login');
   if (response.status === 401) throw new InvalidCredentialsError();
   if (response.status === 429) throw new RateLimitError('Evite', retryAfterSeconds(response));
   if (response.status >= 500) throw new UnreachableError('Evite', response.status);

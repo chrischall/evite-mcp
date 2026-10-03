@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.2](https://github.com/chrischall/evite-mcp/compare/v1.3.1...v1.3.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **auth:** report a CDN/WAF block as edge_blocked instead of "not authenticated" or bad credentials ([#182](https://github.com/chrischall/evite-mcp/issues/182)) ([54c8df2](https://github.com/chrischall/evite-mcp/commit/54c8df2a79aa1606f6dfb8b721b8df15811e2fc2))
+* **deps:** adopt @chrischall/mcp-utils 2.12.0 confirmWrite kit ([#179](https://github.com/chrischall/evite-mcp/issues/179)) ([95390e2](https://github.com/chrischall/evite-mcp/commit/95390e2ec74a6067c73e9fc347f055bf72bfdaa9))
+* **deps:** bump @chrischall/mcp-utils to 2.13.0 ([#184](https://github.com/chrischall/evite-mcp/issues/184)) ([d91bab4](https://github.com/chrischall/evite-mcp/commit/d91bab482506ebcb213b6598a90e68e738d7d795))
+* keep credentials and report edge_blocked on CDN/WAF blocks (mcp-utils 2.10.0) ([#177](https://github.com/chrischall/evite-mcp/issues/177)) ([7b1ed17](https://github.com/chrischall/evite-mcp/commit/7b1ed17787e32142eacab92d6ea7b1fa45968031))
+* keep write approvals valid across a hosted restart (mcp-utils 2.11.0) ([#178](https://github.com/chrischall/evite-mcp/issues/178)) ([04aa30b](https://github.com/chrischall/evite-mcp/commit/04aa30b74f8ff8905c3e5049f9544e768b76a9f1))
+* report CDN/WAF blocks as edge_blocked, not a rejected credential (mcp-utils 2.9.0) ([#175](https://github.com/chrischall/evite-mcp/issues/175)) ([3d0ce9a](https://github.com/chrischall/evite-mcp/commit/3d0ce9a32aecbde9e4fc391ce1b6eeeb8115c6e9))
+
+
+### Documentation
+
+* point the write-tools safety comment at the shared confirmWrite ([#181](https://github.com/chrischall/evite-mcp/issues/181)) ([c59d1d0](https://github.com/chrischall/evite-mcp/commit/c59d1d074f0ce56abf64e7da3bdd87377ef957b1))
+
 ## [1.3.1](https://github.com/chrischall/evite-mcp/compare/v1.3.0...v1.3.1) (2026-09-28)
 
 

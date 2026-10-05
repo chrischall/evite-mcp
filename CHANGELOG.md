@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.3](https://github.com/chrischall/evite-mcp/compare/v1.3.2...v1.3.3) (2026-10-05)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 2 updates ([#188](https://github.com/chrischall/evite-mcp/issues/188)) ([b44e846](https://github.com/chrischall/evite-mcp/commit/b44e846897d74d9f2d7942cd76827d34f417fa68))
+* **deps:** require @chrischall/mcp-utils 2.14.0 and MCP SDK 2.3.0 ([#185](https://github.com/chrischall/evite-mcp/issues/185)) ([3f26625](https://github.com/chrischall/evite-mcp/commit/3f266258c9b55fba7930791ca358f372886b06da))
+
 ## [1.3.2](https://github.com/chrischall/evite-mcp/compare/v1.3.1...v1.3.2) (2026-10-03)
 
 

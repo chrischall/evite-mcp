@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.4](https://github.com/chrischall/evite-mcp/compare/v1.3.3...v1.3.4) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** pick up confirmation-prompt opt-out and fetchproxy relay fixes ([#190](https://github.com/chrischall/evite-mcp/issues/190)) ([7f412e2](https://github.com/chrischall/evite-mcp/commit/7f412e2a0090e281c8c0140d26ae6723bd12d1ea))
+
+
+### Documentation
+
+* document MCP_CONFIRM_ELICITATION ([#192](https://github.com/chrischall/evite-mcp/issues/192)) ([15443ac](https://github.com/chrischall/evite-mcp/commit/15443ac0609857c43b5e00917367015204e1667d))
+
 ## [1.3.3](https://github.com/chrischall/evite-mcp/compare/v1.3.2...v1.3.3) (2026-10-05)
 
 

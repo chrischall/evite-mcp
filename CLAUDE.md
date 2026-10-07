@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCP server for **Evite** event management — talks to evite.com's internal `/services/` (and `/ajax/`, `/tsunami/`) API using the session cookies a signed-in browser holds (Evite has no public API). Cookie-session archetype.
 
-**6 read tools + 13 confirmed write tools** (plus `evite_healthcheck`). Writes ask the user to confirm first — an elicitation prompt where the client supports one, otherwise a preview + single-use `confirmToken` (`MCP_CONFIRM_MODE`) — and mutate only once confirmed.
+**6 read tools + 13 confirmed write tools** (plus `evite_healthcheck`). Writes ask the user to confirm first — an elicitation prompt where the client supports one (and `MCP_CONFIRM_ELICITATION` isn't `off`), otherwise a preview + single-use `confirmToken` (`MCP_CONFIRM_MODE`) — and mutate only once confirmed.
 
 Three auth tiers, in priority order:
 

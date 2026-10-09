@@ -2,7 +2,7 @@
 // every `npx` user and still earns dependabot release bumps; a manifest entry
 // that over-promises misleads the host's tool picker.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,5 +27,14 @@ describe('package hygiene', () => {
     const { tools } = readJson<{ tools: Array<{ name: string; description: string }> }>('manifest.json');
     const hc = tools.find((t) => t.name === 'evite_healthcheck');
     expect(hc?.description).not.toMatch(/reachab/i);
+  });
+
+  // Claude Code reads a plugin's MCP config from `mcpServers`; an `mcp` key is
+  // ignored ("Unknown field 'mcp'") and only worked because ./.mcp.json is the default.
+  it('the plugin declares its MCP config under mcpServers, pointing at a real file', () => {
+    const plugin = readJson<Record<string, unknown>>('.claude-plugin/plugin.json');
+    expect(plugin).not.toHaveProperty('mcp');
+    expect(plugin.mcpServers).toBe('./.mcp.json');
+    expect(existsSync(join(ROOT, plugin.mcpServers as string))).toBe(true);
   });
 });

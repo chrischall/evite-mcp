@@ -126,7 +126,10 @@ const updateGuestArgs = z.object({
   guest_id: z.string().min(1).describe('Draft guest id to edit (guest_id from the guest list).'),
   name: z.string().min(1).describe('New guest name.'),
   email: z.string().min(1).describe('New guest email address.'),
-  phone: z.string().optional().describe('New guest phone (optional).'),
+  phone: z
+    .string()
+    .optional()
+    .describe("New guest phone (optional; omitted keeps the guest's current phone and invite method)."),
   confirmToken: confirmTokenParam,
 });
 
@@ -347,7 +350,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_update_event',
     {
       description: `Edit an existing Evite event (only the fields you pass change). ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: true }),
       inputSchema: updateEventArgs,
     },
     async (args, ctx) => {
@@ -409,29 +412,29 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_update_guest',
     {
       description: `Edit a draft (un-sent) guest's name/email/phone on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: true }),
       inputSchema: updateGuestArgs,
     },
     async (args, ctx) => {
-      const guest = { name: args.name, email: args.email, phone: args.phone };
+      // Merge the guest's stored invite method/phone first, so the preview shows
+      // the exact object the PATCH will send (fleet-audit #436).
+      const body = await client.buildGuestUpdate(args.event_id, args.guest_id, {
+        name: args.name,
+        email: args.email,
+        phone: args.phone,
+      });
       const gate = await confirmWrite(ctx, {
         tool: 'evite_update_guest',
         account: undefined,
         action: 'evite.update_guest',
         message: 'Review and confirm this guest edit:',
         target: args.guest_id,
-        payload: { eventId: args.event_id, guestId: args.guest_id, guest },
-        willSend: {
-          event_id: args.event_id,
-          guest_id: args.guest_id,
-          name: args.name,
-          email: args.email,
-          phone: args.phone,
-        },
+        payload: { eventId: args.event_id, body },
+        willSend: body,
         confirmToken: args.confirmToken,
       });
       if (gate) return gate;
-      const data = await client.updateGuest(args.event_id, args.guest_id, guest);
+      const data = await client.updateGuest(args.event_id, body);
       return minifiedResult(data);
     },
   );
@@ -440,7 +443,12 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_remove_guest',
     {
       description: `Remove a draft (un-sent) guest from an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Remove an Evite guest', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({
+        title: 'Remove an Evite guest',
+        readOnly: false,
+        destructive: true,
+        idempotent: true,
+      }),
       inputSchema: removeGuestArgs,
     },
     async (args, ctx) => {

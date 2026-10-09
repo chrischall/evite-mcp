@@ -148,7 +148,7 @@
     },
     {
       "name": "evite_healthcheck",
-      "description": "Verify session auth + API reachability"
+      "description": "Report server status and whether a session has been resolved yet (no network call)"
     }
   ],
   "compatibility": {

@@ -13,4 +13,11 @@ describe('evite_healthcheck', () => {
     expect(data.authMode).toBe('unresolved');
     await h.close();
   });
+
+  it('carries the shared toolAnnotations shape (title + read-only)', async () => {
+    const h = await createTestHarness((server) => registerHealthcheckTools(server, new EviteClient()));
+    const tool = (await h.client.listTools()).tools.find((t) => t.name === 'evite_healthcheck');
+    expect(tool?.annotations).toEqual({ title: 'Evite healthcheck', readOnlyHint: true });
+    await h.close();
+  });
 });

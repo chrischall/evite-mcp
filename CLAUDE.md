@@ -78,7 +78,7 @@ Write tools (all in `writes.ts`, all gated on the user's confirmation — see th
 | `evite_create_event` | `POST /services/event/v1/` (body `{event:{…}}`) |
 | `evite_update_event` | `PATCH /services/event/v1/{id}` (body `{event:{…}}`) |
 | `evite_add_guest` | `POST /ajax/event/{id}/guestlist/draft/` (top-level JSON array) |
-| `evite_update_guest` | `PATCH /ajax/event/{id}/guestlist/draft/` |
+| `evite_update_guest` | `GET /ajax/event/{id}/guestlist/draft/` (keeps the guest's `invite_method`/`phone`) → `PATCH /ajax/event/{id}/guestlist/draft/` |
 | `evite_remove_guest` | `DELETE /ajax/event/{id}/guestlist/draft/{guestId}` |
 | `evite_send` | `POST /services/event/v1/{id}/send/` |
 | `evite_cancel_event` | `POST /services/event/v1/{id}/actions/cancel/` |

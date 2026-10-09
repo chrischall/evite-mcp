@@ -31,6 +31,15 @@ import { createSessionCache, reportCacheWriteFailure } from './session-cache.js'
 const MAX_UPLOAD_BYTES = 20_000_000;
 
 /**
+ * How much of an image file is read for the type sniff and the dimensions. A
+ * phone JPEG's EXIF APP1 segment alone can be 64 KB (embedded thumbnail), with
+ * ICC/MPF APP2 segments after it, so the SOF frame header routinely sits past
+ * 64 KB (fleet-audit #438). 1 MiB comfortably clears an EXIF + ICC + MPF stack
+ * and is still a small fraction of the 20 MB upload cap.
+ */
+const IMAGE_HEAD_BYTES = 1024 * 1024;
+
+/**
  * Resolve an upload path to an absolute one: expand a leading `~` to the home
  * directory (the only shell expansion we do), then resolve against the cwd.
  * Shared with the upload tool's preview so it shows exactly what would be read.
@@ -159,11 +168,25 @@ export class EviteApiError extends Error {
 }
 
 /**
- * How far back (by the list's `updated` stamp) a same-title draft may be and
- * still count as the one a 500'd create just made. Generous, to absorb clock
- * skew between this machine and Evite.
+ * How far before the create started (by the list's `created` stamp, else
+ * `updated`) a same-title draft may be stamped and still count as the one a
+ * 500'd create just made. Clock skew between this machine and Evite is seconds,
+ * not minutes — a wider window adopts a draft the user made just before
+ * (fleet-audit #999).
  */
-const CREATE_RECOVERY_WINDOW_MS = 5 * 60_000;
+const CREATE_RECOVERY_WINDOW_MS = 60_000;
+
+/** A host draft as {@link EviteClient.findFreshDraft} sees it in the events list. */
+interface DraftSummary {
+  event_id: string;
+  title: string;
+  created?: string;
+  updated?: string;
+  [key: string]: unknown;
+}
+
+/** The outcome of matching a 500'd create against the host's drafts. */
+type DraftMatch = { draft: DraftSummary } | { candidates: DraftSummary[] };
 
 /** Health report surfaced by the `evite_healthcheck` tool. */
 export interface EviteHealth {
@@ -302,11 +325,28 @@ export interface GuestDraft {
   email: string;
 }
 
-/** New values for a draft guest ({@link EviteClient.updateGuest}). */
+/** A stored draft guest as the draft guest list returns it (fields used here). */
+interface DraftGuestRecord {
+  guest_id?: string;
+  phone?: string | null;
+  invite_method?: string | null;
+}
+
+/** New values for a draft guest ({@link EviteClient.buildGuestUpdate}). */
 export interface GuestPatch {
   name: string;
   email: string;
   phone?: string;
+}
+
+/** The full draft-guest PATCH body ({@link EviteClient.updateGuest}). */
+export interface GuestUpdate {
+  guest_id: string;
+  event_id: string;
+  invite_method: string;
+  name: string;
+  email: string;
+  phone: string;
 }
 
 /**
@@ -359,6 +399,25 @@ export interface EviteClientOptions {
 }
 
 /**
+ * Whether {@link res} is a redirect to Evite's sign-in page — how an HTML route
+ * fetched with `redirect: 'manual'` answers an expired session (instead of a
+ * 401/403).
+ */
+function isLoginRedirect(res: Response): boolean {
+  if (res.status < 300 || res.status > 399) return false;
+  const location = res.headers.get('location') ?? '';
+  let path: string;
+  try {
+    path = new URL(location, BASE_URL).pathname;
+  } catch {
+    // A malformed Location can't be a sign-in redirect; let the caller's usual
+    // error path report the response instead of a TypeError from inside isExpired.
+    return false;
+  }
+  return /\/(?:log-?in|sign-?in|ajax_login)(?:\/|$)/i.test(path);
+}
+
+/**
  * The CDN/WAF vendor whose refusal page {@link res} is, or `null` (also when the
  * body cannot be read). Reads a clone, so the caller's copy stays readable.
  */
@@ -407,6 +466,9 @@ export class EviteClient {
       // not cost a password re-login per call (fleet-audit #100).
       isExpired: async (res) => {
         if (isCsrfRecovered(res)) return false;
+        // A manual-redirect HTML route (duplicate) bounced to the sign-in page:
+        // the session is gone (fleet-audit #437).
+        if (isLoginRedirect(res)) return true;
         // A 401 CDN/WAF refusal page never reached Evite: nothing judged the
         // session, so it is not an expiry — no re-login, no replay
         // (chrischall/mcp-host#1015; mirrors classify403's 'edge' kind).
@@ -973,7 +1035,7 @@ export class EviteClient {
     // Both file operations live in one try so any read-time I/O error (the
     // file vanishing between awaits, EACCES, …) surfaces as the friendly
     // message rather than a raw Node error. The type sniff and the dimensions
-    // need only the header, so readFileHead pulls just the first 64 KB off disk.
+    // need only the header, so readFileHead pulls just IMAGE_HEAD_BYTES off disk.
     // Nothing leaves the machine until every check below has passed.
     // When EVITE_UPLOAD_DIR is set, both reads are confined to it: a path that
     // resolves (symlinks included) outside those directories is refused before
@@ -982,7 +1044,7 @@ export class EviteClient {
     let head: Buffer;
     let blob: Blob;
     try {
-      head = await readFileHead(abs, 65_536, { ...(roots ? { allowedRoots: roots } : {}) });
+      head = await readFileHead(abs, IMAGE_HEAD_BYTES, { ...(roots ? { allowedRoots: roots } : {}) });
       blob = await fileBlob(abs, { ...(roots ? { allowedRoots: roots } : {}) });
     } catch (e) {
       if (roots && /outside the allowed directories/.test(String(e))) {
@@ -1098,22 +1160,55 @@ export class EviteClient {
   }
 
   /**
+   * The full PATCH body for editing a draft guest (see {@link updateGuest}).
+   *
+   * Because the PATCH replaces every field, the guest's current `invite_method`
+   * and `phone` are read from the draft list and kept unless the patch overrides
+   * the phone — otherwise renaming a text-invited guest flipped them to email and
+   * erased their number (fleet-audit #436). If that read fails or does not list
+   * the guest, the body falls back to the previous defaults (`email`, the given
+   * phone or blank). Built before the confirm gate so the preview shows exactly
+   * what will be sent.
+   */
+  async buildGuestUpdate(eventId: string, guestId: string, patch: GuestPatch): Promise<GuestUpdate> {
+    const current = await this.findDraftGuest(eventId, guestId).catch(() => undefined);
+    return {
+      guest_id: guestId,
+      event_id: eventId,
+      invite_method: current?.invite_method || 'email',
+      name: patch.name,
+      email: patch.email,
+      phone: patch.phone ?? current?.phone ?? '',
+    };
+  }
+
+  /**
    * Edit a draft (un-sent) guest's name / email / phone —
    * **`PATCH /ajax/event/{id}/guestlist/draft/`** → `200`.
    *
    * VERIFIED (live capture 2026-06-01): the site issues this PATCH with the full
    * guest object `{guest_id, email, name, phone, event_id, invite_method}`; the
-   * `guest_id` selects the guest, the other fields are the new values.
+   * `guest_id` selects the guest, the other fields are the new values. Build the
+   * body with {@link buildGuestUpdate}.
    */
-  async updateGuest(eventId: string, guestId: string, patch: GuestPatch): Promise<unknown> {
-    return this.write('PATCH', `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`, {
-      guest_id: guestId,
-      event_id: eventId,
-      invite_method: 'email',
-      name: patch.name,
-      email: patch.email,
-      phone: patch.phone ?? '',
-    });
+  async updateGuest(eventId: string, body: GuestUpdate): Promise<unknown> {
+    return this.write('PATCH', `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`, body);
+  }
+
+  /**
+   * One guest from the event's draft guest list —
+   * `GET /ajax/event/{id}/guestlist/draft/?…&per_page=5000` →
+   * `{ guests: { page: [DraftGuest…], … } }` (see docs/EVITE-API.md).
+   */
+  private async findDraftGuest(eventId: string, guestId: string): Promise<DraftGuestRecord | undefined> {
+    const res = await this.get<{ guests?: { page?: unknown } }>(
+      `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`,
+      { search_by: 'all', search_type: 'contains', reverse: 'false', per_page: 5000 },
+    );
+    const page = res.guests?.page;
+    return Array.isArray(page)
+      ? (page as DraftGuestRecord[]).find((g) => g?.guest_id === guestId)
+      : undefined;
   }
 
   /**
@@ -1174,8 +1269,9 @@ export class EviteClient {
       if (!(err instanceof EviteApiError) || err.status !== 500) throw err;
     }
 
-    const draft = await this.findFreshDraft(input.title, startedAt).catch(() => undefined);
-    if (draft) {
+    const match = await this.findFreshDraft(input.title, startedAt).catch(() => undefined);
+    if (match && 'draft' in match) {
+      const { draft } = match;
       return {
         created: true,
         eventId: draft.event_id,
@@ -1185,38 +1281,50 @@ export class EviteClient {
           'Do not create it again.',
       };
     }
+    const candidates = match?.candidates ?? [];
     return {
       created: 'unknown',
+      ...(candidates.length > 0
+        ? {
+            candidates: candidates.map((d) => ({
+              eventId: d.event_id,
+              title: d.title,
+              ...(d.created !== undefined ? { created: d.created } : {}),
+              ...(d.updated !== undefined ? { updated: d.updated } : {}),
+            })),
+          }
+        : {}),
       note:
         'Evite answered the create with a 500, which it also does when the draft WAS created, and ' +
-        'the new draft could not be confirmed. Do not retry: check evite_list_events with status ' +
-        '"draft" first — retrying may create a duplicate.',
+        'the new draft could not be confirmed' +
+        (candidates.length > 0 ? ' (same-title drafts are listed under candidates)' : '') +
+        '. Do not retry: check evite_list_events with status "draft" first — retrying may create ' +
+        'a duplicate.',
     };
   }
 
   /**
-   * The newest of the host's drafts titled {@link title} whose `updated` stamp is
-   * within {@link CREATE_RECOVERY_WINDOW_MS} of {@link since} (a draft with no
-   * stamp is accepted on its title alone). Used by {@link createEvent}.
+   * Match a 500'd create against the host's drafts titled {@link title}.
+   *
+   * A draft counts as the one just created only when its `created` stamp (else
+   * `updated`) is no more than {@link CREATE_RECOVERY_WINDOW_MS} before
+   * {@link since}. Exactly one such draft → `{ draft }`. Several → ambiguous,
+   * `{ candidates }`. None stamped fresh: a lone same-title draft with no stamp
+   * at all is accepted on its title; any other same-title drafts are returned as
+   * `{ candidates }` (never adopted — they may predate the create). Used by
+   * {@link createEvent}.
    */
-  private async findFreshDraft(
-    title: string,
-    since: number,
-  ): Promise<{ event_id: string; updated?: string; [key: string]: unknown } | undefined> {
+  private async findFreshDraft(title: string, since: number): Promise<DraftMatch> {
     const { events } = await this.listEvents({ filterBy: 'host', status: ['draft'], numResults: 50 });
-    const stamp = (e: { updated?: string }): number => Date.parse(e.updated ?? '');
-    // Newest first; an unstamped draft ranks as oldest.
-    const rank = (e: { updated?: string }): number => stamp(e) || 0;
-    const candidates = (events as Array<{ event_id?: string; title?: string; updated?: string }>)
-      .filter((e): e is { event_id: string; title: string; updated?: string } =>
-        Boolean(e.event_id) && e.title === title,
-      )
-      .filter((e) => {
-        const t = stamp(e);
-        return Number.isNaN(t) || t >= since - CREATE_RECOVERY_WINDOW_MS;
-      })
-      .sort((a, b) => rank(b) - rank(a));
-    return candidates[0];
+    const stamp = (e: DraftSummary): number => Date.parse(e.created ?? e.updated ?? '');
+    const sameTitle = (events as Array<Partial<DraftSummary>>).filter(
+      (e): e is DraftSummary => Boolean(e.event_id) && e.title === title,
+    );
+    const fresh = sameTitle.filter((e) => stamp(e) >= since - CREATE_RECOVERY_WINDOW_MS);
+    if (fresh.length === 1) return { draft: fresh[0]! };
+    if (fresh.length > 1) return { candidates: fresh };
+    if (sameTitle.length === 1 && Number.isNaN(stamp(sameTitle[0]!))) return { draft: sameTitle[0]! };
+    return { candidates: sameTitle };
   }
 
   /**
@@ -1273,17 +1381,22 @@ export class EviteClient {
    * is the `/invitation/{newId}/` segment of the redirect target.
    */
   async duplicateEvent(eventId: string): Promise<DuplicateResult> {
-    const session = await this.sessions.ensure();
     const url = `${BASE_URL}/plus/create/${encodeURIComponent(eventId)}/copy/?previous=my_events`;
-    const headers: Record<string, string> = {
-      cookie: session.cookieHeader,
-      accept: 'text/html',
-    };
-    if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
-
-    const response = await fetch(url, { method: 'GET', headers, redirect: 'manual' });
-    // No re-login on this path, so settle an unexplained 403 with the probe.
-    await this.throwIfAuthFailure(response, 'GET', '/plus/create/{id}/copy/', true);
+    // Through the session manager like every other call: a 401, a dead-session
+    // 403, or a redirect to the sign-in page (how an HTML route reports an
+    // expired session) re-logs-in once and replays (fleet-audit #437).
+    const response = await this.sessions.withSession((session) => {
+      const headers: Record<string, string> = {
+        cookie: session.cookieHeader,
+        accept: 'text/html',
+      };
+      if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
+      return fetch(url, { method: 'GET', headers, redirect: 'manual' });
+    });
+    if (isLoginRedirect(response)) {
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
+    await this.throwIfAuthFailure(response, 'GET', '/plus/create/{id}/copy/');
     const location = response.headers.get('location') ?? '';
     const match = location.match(/\/invitation\/([^/?]+)\//);
     if (!match) {

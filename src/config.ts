@@ -1,5 +1,5 @@
 import { delimiter } from 'node:path';
-import { readEnvVar, parseBoolEnv } from '@chrischall/mcp-utils';
+import { readEnvVar } from '@chrischall/mcp-utils';
 
 /**
  * EVITE_UPLOAD_DIR — optional allow-list of directories `evite_upload_photo`
@@ -11,9 +11,9 @@ function uploadRoots(): string[] | undefined {
   return roots && roots.length > 0 ? roots : undefined;
 }
 
+// Session env vars (EVITE_EMAIL / EVITE_PASSWORD / EVITE_SESSION_COOKIE /
+// EVITE_DISABLE_FETCHPROXY) are read only by auth.ts, which takes an injectable
+// env for tests; keeping a second accessor here would let the two drift.
 export const config = {
-  email: () => readEnvVar('EVITE_EMAIL'),
-  password: () => readEnvVar('EVITE_PASSWORD'),
-  disableFetchproxy: () => parseBoolEnv('EVITE_DISABLE_FETCHPROXY', { default: false }),
   uploadRoots,
 };

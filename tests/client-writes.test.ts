@@ -360,6 +360,39 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     });
   }
 
+  // fleet-audit #438: phone JPEGs put EXIF (APP1, up to 64 KB with its thumbnail)
+  // plus ICC/MPF (APP2) segments ahead of the SOF, past a 64 KB header read.
+  it('reads the frame size of a JPEG whose SOF sits beyond the first 64 KB', async () => {
+    const seg = (marker: number, payloadLen: number) => {
+      const b = Buffer.alloc(4 + payloadLen);
+      b[0] = 0xff;
+      b[1] = marker;
+      b.writeUInt16BE(payloadLen + 2, 2);
+      return b;
+    };
+    const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x0b, 0xb8, 0x0f, 0xa0]); // 4000x3000
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      seg(0xe1, 65_000), // EXIF + thumbnail
+      seg(0xe2, 30_000), // ICC profile
+      seg(0xe2, 1_000), // MPF
+      sof,
+      Buffer.alloc(32),
+      Buffer.from([0xff, 0xd9]),
+    ]);
+    const path = join(tmpdir(), `evite-test-exif-${jpeg.length}.jpg`);
+    writeFileSync(path, jpeg);
+    const spy = uploadFetch();
+    try {
+      await newClient().uploadPhoto('EV', { path, guestId: 'GUEST9' });
+      const reqIdx = spy.mock.calls.findIndex((c) => String(c[0]).includes('/upload/request/'));
+      const reqBody = JSON.parse((spy.mock.calls[reqIdx]![1] as RequestInit).body as string);
+      expect(reqBody).toMatchObject({ mimetype: 'image/jpeg', width: 4000, height: 3000 });
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
   it('runs request → GCS multipart → finish → register, returning the photo id', async () => {
     const spy = uploadFetch();
     const path = writePng();
@@ -611,19 +644,38 @@ describe('EviteClient — addGuest (VERIFIED endpoint)', () => {
   });
 });
 
-describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () => {
-  it('PATCHes the draft endpoint with the full guest object', async () => {
-    const spy = mockFetch({ body: { ok: true } });
+describe('EviteClient — buildGuestUpdate / updateGuest / removeGuest (VERIFIED endpoints)', () => {
+  // The draft list read buildGuestUpdate merges from (documented capture shape:
+  // `{ guests: { page: [DraftGuest…], … } }`).
+  const draftList = (...guests: Array<Record<string, unknown>>) => ({
+    body: { already_sent: false, guests: { page: guests, current_page: 1, has_next: false, count: guests.length } },
+  });
+  const patchBody = (spy: ReturnType<typeof mockFetch>) => bodyOf(spy, 1);
+  // The tool's two steps: build the merged body (read), then PATCH it.
+  const editGuest = async (patch: { name: string; email: string; phone?: string }) => {
     const client = newClient();
-    await client.updateGuest('EVENTID0', 'GUEST9', { name: 'Renamed', email: 'r@example.com' });
+    return client.updateGuest('EVENTID0', await client.buildGuestUpdate('EVENTID0', 'GUEST9', patch));
+  };
 
-    const url = spy.mock.calls[0]![0] as string;
-    const init = spy.mock.calls[0]![1] as RequestInit;
+  it('reads the draft list, then PATCHes the draft endpoint with the full guest object', async () => {
+    const spy = mockFetch(
+      draftList({ guest_id: 'GUEST9', name: 'Old', email: 'o@example.com', phone: '', invite_method: 'email' }),
+      { body: { ok: true } },
+    );
+    await editGuest({ name: 'Renamed', email: 'r@example.com' });
+
+    const listUrl = spy.mock.calls[0]![0] as string;
+    expect(listUrl).toContain('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/?');
+    expect(listUrl).toContain('per_page=5000');
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe('GET');
+
+    const url = spy.mock.calls[1]![0] as string;
+    const init = spy.mock.calls[1]![1] as RequestInit;
     expect(url).toBe('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/');
     expect(init.method).toBe('PATCH');
-    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    expect(headersOf(spy, 1)[CSRF_HEADER]).toBe('tok123');
     // Verified live: PATCH body = {guest_id, event_id, invite_method, name, email, phone}.
-    expect(JSON.parse(init.body as string)).toEqual({
+    expect(patchBody(spy)).toEqual({
       guest_id: 'GUEST9',
       event_id: 'EVENTID0',
       invite_method: 'email',
@@ -631,6 +683,47 @@ describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () =>
       email: 'r@example.com',
       phone: '',
     });
+  });
+
+  // fleet-audit #436: renaming a text-invited guest flipped them to email and
+  // erased their phone number.
+  it("keeps the guest's current invite method and phone when the patch omits phone", async () => {
+    const spy = mockFetch(
+      draftList(
+        { guest_id: 'OTHER', phone: '+15550000000', invite_method: 'email' },
+        { guest_id: 'GUEST9', name: 'Old', email: '', phone: '+15551234567', invite_method: 'sms' },
+      ),
+      { body: { ok: true } },
+    );
+    await editGuest({ name: 'Renamed', email: 'r@example.com' });
+    expect(patchBody(spy)).toMatchObject({ invite_method: 'sms', phone: '+15551234567' });
+  });
+
+  it('an explicit phone overrides the current one (invite method still kept)', async () => {
+    const spy = mockFetch(
+      draftList({ guest_id: 'GUEST9', phone: '+15551234567', invite_method: 'sms' }),
+      { body: { ok: true } },
+    );
+    await editGuest({ name: 'N', email: 'e@example.com', phone: '+15559999999' });
+    expect(patchBody(spy)).toMatchObject({ invite_method: 'sms', phone: '+15559999999' });
+  });
+
+  it("falls back to email and the given phone when the guest's current record has none", async () => {
+    const spy = mockFetch(
+      draftList({ guest_id: 'GUEST9', phone: null, invite_method: null }),
+      { body: { ok: true } },
+    );
+    await editGuest({ name: 'N', email: 'e@example.com' });
+    expect(patchBody(spy)).toMatchObject({ invite_method: 'email', phone: '' });
+  });
+
+  it('still edits the guest when the draft list cannot be read or does not list them', async () => {
+    for (const listing of [{ status: 500, rawBody: 'boom' }, { body: { guests: {} } }, draftList({ guest_id: 'OTHER' })]) {
+      vi.restoreAllMocks();
+      const spy = mockFetch(listing, { body: { ok: true } });
+      await editGuest({ name: 'N', email: 'e@example.com', phone: '+1555' });
+      expect(patchBody(spy)).toMatchObject({ guest_id: 'GUEST9', invite_method: 'email', phone: '+1555' });
+    }
   });
 
   it('DELETEs the per-guest draft path with no body', async () => {
@@ -741,6 +834,68 @@ describe('EviteClient — createEvent', () => {
       expect(result.eventId).toBeUndefined();
       expect(String(result.note)).toMatch(/do not retry/i);
       expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    // fleet-audit #999: the recovery must not adopt a draft that existed before
+    // the create started — that reports a genuine failure as success.
+    it('does not adopt a same-title draft last touched minutes BEFORE the create started', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        { body: { events: [draft('PRE', 'Pool Party', ago(3 * 60_000))], totals: {} } },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+      expect(result.eventId).toBeUndefined();
+    });
+
+    it('judges freshness by the `created` stamp when the list carries one', async () => {
+      // Edited a second ago, but created an hour ago: a pre-existing draft.
+      mockFetch(
+        { status: 500, rawBody: '' },
+        {
+          body: {
+            events: [{ ...draft('EDITED', 'Pool Party', ago(1_000)), created: ago(60 * 60_000) }],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+    });
+
+    it('refuses an unstamped draft when more than one same-title draft exists', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        {
+          body: {
+            events: [draft('NOTS', 'Pool Party', undefined), draft('PRE', 'Pool Party', ago(60 * 60_000))],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+      expect(result.candidates).toEqual([
+        { eventId: 'NOTS', title: 'Pool Party' },
+        { eventId: 'PRE', title: 'Pool Party', updated: expect.any(String) },
+      ]);
+    });
+
+    it('returns "unknown" listing the candidates when several fresh same-title drafts match', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        {
+          body: {
+            events: [draft('A', 'Pool Party', ago(1_000)), draft('B', 'Pool Party', ago(2_000))],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+      expect(result.eventId).toBeUndefined();
+      expect((result.candidates as Array<{ eventId: string }>).map((c) => c.eventId)).toEqual(['A', 'B']);
+      expect(String(result.note)).toMatch(/do not retry/i);
     });
 
     it('returns the "unknown" result when the confirming re-list itself fails', async () => {
@@ -855,12 +1010,90 @@ describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
     expect(result.customizeUrl).toContain('source_event=EVENTID0');
   });
 
-  it('maps a 403 on a dead session (probe also 403s) to SessionNotAuthenticatedError', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(
-      async () => new Response(null, { status: 403 }) as unknown as Response,
+  // fleet-audit #437: duplicate used to bypass the session manager, so an expired
+  // session never re-logged-in and a login redirect surfaced as a raw 302 error.
+  const copied = () =>
+    new Response(null, {
+      status: 302,
+      headers: { location: '/invitation/NEWID9/customize?source_event=E' },
+    }) as unknown as Response;
+  const toLogin = () =>
+    new Response(null, {
+      status: 302,
+      headers: { location: 'https://www.evite.com/login?next=/plus/create/E/copy/' },
+    }) as unknown as Response;
+
+  it('re-logs-in once and replays when the copy redirects to the login page', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(toLogin()).mockResolvedValueOnce(copied());
+    const resolver = vi.fn(async () => fakeSession);
+    const result = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E');
+    expect(result.newEventId).toBe('NEWID9');
+    expect(resolver).toHaveBeenCalledTimes(2); // initial + one re-login
+    expect(spy).toHaveBeenCalledTimes(2); // original + one replay
+  });
+
+  it('reports a login redirect that survives the re-login as SessionNotAuthenticatedError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => toLogin());
+    const resolver = vi.fn(async () => fakeSession);
+    const err = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(resolver).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-logs-in once and replays on a 401', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('', { status: 401 }) as unknown as Response)
+      .mockResolvedValueOnce(copied());
+    const resolver = vi.fn(async () => fakeSession);
+    const result = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E');
+    expect(result.newEventId).toBe('NEWID9');
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+    // The replay carries the session's cookie + CSRF header, as the original did.
+    const replay = spy.mock.calls[1]![1] as RequestInit & { headers: Record<string, string> };
+    expect(replay.headers.cookie).toBe(fakeSession.cookieHeader);
+    expect(replay.headers[CSRF_HEADER]).toBe('tok123');
+  });
+
+  it('a 403 on a dead session (probe also 403s) re-logs-in and replays', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 403 }) as unknown as Response)
+      .mockResolvedValueOnce(new Response(null, { status: 403 }) as unknown as Response) // probe
+      .mockResolvedValueOnce(copied());
+    const resolver = vi.fn(async () => fakeSession);
+    const result = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E');
+    expect(result.newEventId).toBe('NEWID9');
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('a non-login redirect is not treated as an expiry', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: '/somewhere/else/' } }) as unknown as Response,
     );
-    const client = newClient();
-    await expect(client.duplicateEvent('E')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+    const resolver = vi.fn(async () => fakeSession);
+    await expect(new EviteClient({ resolveSession: resolver }).duplicateEvent('E')).rejects.toThrow(/302/);
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it('a redirect with no Location is not treated as an expiry', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 302 }) as unknown as Response);
+    const resolver = vi.fn(async () => fakeSession);
+    await expect(new EviteClient({ resolveSession: resolver }).duplicateEvent('E')).rejects.toThrow(/302/);
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it('a redirect with a malformed Location is not treated as an expiry (no TypeError)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: 'http://[' } }) as unknown as Response,
+    );
+    const resolver = vi.fn(async () => fakeSession);
+    const err = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E').catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect(String((err as Error).message)).toMatch(/302/);
+    expect(resolver).toHaveBeenCalledTimes(1);
   });
 
   it('maps a 403 on a live session (probe OK) to a forbidden error', async () => {

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.5](https://github.com/chrischall/evite-mcp/compare/v1.3.4...v1.3.5) (2026-10-09)
+
+
+### Bug Fixes
+
+* annotate tools truthfully and sync manifests with the served tools ([#199](https://github.com/chrischall/evite-mcp/issues/199)) ([81a5593](https://github.com/chrischall/evite-mcp/commit/81a5593e15b14d1906ca34a65db74c0511298ed1))
+* declare the plugin MCP config under the mcpServers key Claude Code reads ([#200](https://github.com/chrischall/evite-mcp/issues/200)) ([cef8658](https://github.com/chrischall/evite-mcp/commit/cef86582792d959b9a073eb1d96ee935118a42cc))
+* **deps:** bump source-map-js ([#196](https://github.com/chrischall/evite-mcp/issues/196)) ([fef7258](https://github.com/chrischall/evite-mcp/commit/fef72584f3613758cc1b9b4e47fd05ac6e2f721f))
+* **deps:** update @chrischall/mcp-utils to 3.0.0 ([#198](https://github.com/chrischall/evite-mcp/issues/198)) ([8bc7c69](https://github.com/chrischall/evite-mcp/commit/8bc7c6922466316293a4069053c1deeeb61aeafd))
+* resolve low-severity audit findings ([#193](https://github.com/chrischall/evite-mcp/issues/193)) ([344825e](https://github.com/chrischall/evite-mcp/commit/344825e92248b48af49ed66be8493b54b790a324))
+
+
+### Documentation
+
+* note that a write preview may make a read-only lookup ([#197](https://github.com/chrischall/evite-mcp/issues/197)) ([f60d35d](https://github.com/chrischall/evite-mcp/commit/f60d35d61e69a582ca784fdd3faf188961ee311d))
+
 ## [1.3.4](https://github.com/chrischall/evite-mcp/compare/v1.3.3...v1.3.4) (2026-10-07)
 
 

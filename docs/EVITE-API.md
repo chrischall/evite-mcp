@@ -199,7 +199,7 @@ that cleared `read_network_requests`):
 Captured from a DevTools HAR (Preserve-log on) of real actions on a throwaway:
 - **Edit a draft guest** — **`PATCH /ajax/event/{id}/guestlist/draft/`**, body the full
   guest object `{guest_id, email, name, phone, event_id, invite_method}` → `200`
-  (`guest_id` selects, the rest are the new values). → `EviteClient.updateGuest()`.
+  (`guest_id` selects, the rest are the new values). → `EviteClient.buildGuestUpdate()` + `updateGuest()`.
 - **Remove a draft guest** — **`DELETE /ajax/event/{id}/guestlist/draft/{guestId}`**
   (no body) → `200`. → `EviteClient.removeGuest()`.
 - **Duplicate event** — **`GET /plus/create/{id}/copy/?previous=my_events`** → `302`,

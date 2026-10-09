@@ -24,6 +24,15 @@ function fakeClient() {
     createEvent: vi.fn(async () => ({ event: { id: 'NEW' } })),
     updateEvent: vi.fn(async () => ({ event: { id: 'EVENTID0' } })),
     addGuest: vi.fn(async () => ({ ok: true })),
+    // The merged PATCH body: the guest's stored invite method/phone kept.
+    buildGuestUpdate: vi.fn(async (eventId: string, guestId: string, patch: { name: string; email: string; phone?: string }) => ({
+      guest_id: guestId,
+      event_id: eventId,
+      invite_method: 'sms',
+      name: patch.name,
+      email: patch.email,
+      phone: patch.phone ?? '+15551234567',
+    })),
     updateGuest: vi.fn(async () => ({ ok: true })),
     removeGuest: vi.fn(async () => ({ ok: true })),
     sendInvitation: vi.fn(async () => ({ ok: true })),
@@ -37,6 +46,7 @@ function fakeClient() {
     createEvent: ReturnType<typeof vi.fn>;
     updateEvent: ReturnType<typeof vi.fn>;
     addGuest: ReturnType<typeof vi.fn>;
+    buildGuestUpdate: ReturnType<typeof vi.fn>;
     updateGuest: ReturnType<typeof vi.fn>;
     removeGuest: ReturnType<typeof vi.fn>;
     sendInvitation: ReturnType<typeof vi.fn>;
@@ -494,28 +504,39 @@ describe('evite_add_guest', () => {
 
 describe('evite_update_guest', () => {
   const args = { event_id: 'EVENTID0', guest_id: 'GUEST9', name: 'New', email: 'new@example.com' };
+  // fleet-audit #436: the preview shows the object that will actually be sent,
+  // with the guest's stored invite method and phone merged in.
+  const merged = {
+    guest_id: 'GUEST9',
+    event_id: 'EVENTID0',
+    invite_method: 'sms',
+    name: 'New',
+    email: 'new@example.com',
+    phone: '+15551234567',
+  };
 
-  it('phase 1: previews and makes no call', async () => {
+  it('phase 1: previews the merged PATCH body and makes no write', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
     const h = await harnessFor(client);
     const p1 = await phaseOne(h, 'evite_update_guest', args);
     expect(client.updateGuest).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.willSend).toEqual(args);
-    await h.close();
-  });
-
-  it('phase 2: calls client.updateGuest once', async () => {
-    const client = fakeClient();
-    const h = await harnessFor(client);
-    await confirmed(h, 'evite_update_guest', args);
-    expect(client.updateGuest).toHaveBeenCalledTimes(1);
-    expect(client.updateGuest).toHaveBeenCalledWith('EVENTID0', 'GUEST9', {
+    expect(client.buildGuestUpdate).toHaveBeenCalledWith('EVENTID0', 'GUEST9', {
       name: 'New',
       email: 'new@example.com',
       phone: undefined,
     });
+    expect(p1.preview.willSend).toEqual(merged);
+    await h.close();
+  });
+
+  it('phase 2: sends exactly the previewed body once', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    await confirmed(h, 'evite_update_guest', args);
+    expect(client.updateGuest).toHaveBeenCalledTimes(1);
+    expect(client.updateGuest).toHaveBeenCalledWith('EVENTID0', merged);
     await h.close();
   });
 });

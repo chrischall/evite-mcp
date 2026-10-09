@@ -332,11 +332,21 @@ interface DraftGuestRecord {
   invite_method?: string | null;
 }
 
-/** New values for a draft guest ({@link EviteClient.updateGuest}). */
+/** New values for a draft guest ({@link EviteClient.buildGuestUpdate}). */
 export interface GuestPatch {
   name: string;
   email: string;
   phone?: string;
+}
+
+/** The full draft-guest PATCH body ({@link EviteClient.updateGuest}). */
+export interface GuestUpdate {
+  guest_id: string;
+  event_id: string;
+  invite_method: string;
+  name: string;
+  email: string;
+  phone: string;
 }
 
 /**
@@ -1150,30 +1160,39 @@ export class EviteClient {
   }
 
   /**
-   * Edit a draft (un-sent) guest's name / email / phone —
-   * **`PATCH /ajax/event/{id}/guestlist/draft/`** → `200`.
-   *
-   * VERIFIED (live capture 2026-06-01): the site issues this PATCH with the full
-   * guest object `{guest_id, email, name, phone, event_id, invite_method}`; the
-   * `guest_id` selects the guest, the other fields are the new values.
+   * The full PATCH body for editing a draft guest (see {@link updateGuest}).
    *
    * Because the PATCH replaces every field, the guest's current `invite_method`
-   * and `phone` are read from the draft list first and kept unless the patch
-   * overrides the phone — otherwise renaming a text-invited guest flipped them to
-   * email and erased their number (fleet-audit #436). If that read fails or does
-   * not list the guest, the edit still goes ahead with the previous defaults
-   * (`email`, the given phone or blank).
+   * and `phone` are read from the draft list and kept unless the patch overrides
+   * the phone — otherwise renaming a text-invited guest flipped them to email and
+   * erased their number (fleet-audit #436). If that read fails or does not list
+   * the guest, the body falls back to the previous defaults (`email`, the given
+   * phone or blank). Built before the confirm gate so the preview shows exactly
+   * what will be sent.
    */
-  async updateGuest(eventId: string, guestId: string, patch: GuestPatch): Promise<unknown> {
+  async buildGuestUpdate(eventId: string, guestId: string, patch: GuestPatch): Promise<GuestUpdate> {
     const current = await this.findDraftGuest(eventId, guestId).catch(() => undefined);
-    return this.write('PATCH', `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`, {
+    return {
       guest_id: guestId,
       event_id: eventId,
       invite_method: current?.invite_method || 'email',
       name: patch.name,
       email: patch.email,
       phone: patch.phone ?? current?.phone ?? '',
-    });
+    };
+  }
+
+  /**
+   * Edit a draft (un-sent) guest's name / email / phone —
+   * **`PATCH /ajax/event/{id}/guestlist/draft/`** → `200`.
+   *
+   * VERIFIED (live capture 2026-06-01): the site issues this PATCH with the full
+   * guest object `{guest_id, email, name, phone, event_id, invite_method}`; the
+   * `guest_id` selects the guest, the other fields are the new values. Build the
+   * body with {@link buildGuestUpdate}.
+   */
+  async updateGuest(eventId: string, body: GuestUpdate): Promise<unknown> {
+    return this.write('PATCH', `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`, body);
   }
 
   /**

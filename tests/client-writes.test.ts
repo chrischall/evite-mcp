@@ -644,20 +644,25 @@ describe('EviteClient — addGuest (VERIFIED endpoint)', () => {
   });
 });
 
-describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () => {
-  // The draft list read updateGuest merges from (documented capture shape:
+describe('EviteClient — buildGuestUpdate / updateGuest / removeGuest (VERIFIED endpoints)', () => {
+  // The draft list read buildGuestUpdate merges from (documented capture shape:
   // `{ guests: { page: [DraftGuest…], … } }`).
   const draftList = (...guests: Array<Record<string, unknown>>) => ({
     body: { already_sent: false, guests: { page: guests, current_page: 1, has_next: false, count: guests.length } },
   });
   const patchBody = (spy: ReturnType<typeof mockFetch>) => bodyOf(spy, 1);
+  // The tool's two steps: build the merged body (read), then PATCH it.
+  const editGuest = async (patch: { name: string; email: string; phone?: string }) => {
+    const client = newClient();
+    return client.updateGuest('EVENTID0', await client.buildGuestUpdate('EVENTID0', 'GUEST9', patch));
+  };
 
   it('reads the draft list, then PATCHes the draft endpoint with the full guest object', async () => {
     const spy = mockFetch(
       draftList({ guest_id: 'GUEST9', name: 'Old', email: 'o@example.com', phone: '', invite_method: 'email' }),
       { body: { ok: true } },
     );
-    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'Renamed', email: 'r@example.com' });
+    await editGuest({ name: 'Renamed', email: 'r@example.com' });
 
     const listUrl = spy.mock.calls[0]![0] as string;
     expect(listUrl).toContain('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/?');
@@ -690,7 +695,7 @@ describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () =>
       ),
       { body: { ok: true } },
     );
-    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'Renamed', email: 'r@example.com' });
+    await editGuest({ name: 'Renamed', email: 'r@example.com' });
     expect(patchBody(spy)).toMatchObject({ invite_method: 'sms', phone: '+15551234567' });
   });
 
@@ -699,7 +704,7 @@ describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () =>
       draftList({ guest_id: 'GUEST9', phone: '+15551234567', invite_method: 'sms' }),
       { body: { ok: true } },
     );
-    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'N', email: 'e@example.com', phone: '+15559999999' });
+    await editGuest({ name: 'N', email: 'e@example.com', phone: '+15559999999' });
     expect(patchBody(spy)).toMatchObject({ invite_method: 'sms', phone: '+15559999999' });
   });
 
@@ -708,7 +713,7 @@ describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () =>
       draftList({ guest_id: 'GUEST9', phone: null, invite_method: null }),
       { body: { ok: true } },
     );
-    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'N', email: 'e@example.com' });
+    await editGuest({ name: 'N', email: 'e@example.com' });
     expect(patchBody(spy)).toMatchObject({ invite_method: 'email', phone: '' });
   });
 
@@ -716,7 +721,7 @@ describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () =>
     for (const listing of [{ status: 500, rawBody: 'boom' }, { body: { guests: {} } }, draftList({ guest_id: 'OTHER' })]) {
       vi.restoreAllMocks();
       const spy = mockFetch(listing, { body: { ok: true } });
-      await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'N', email: 'e@example.com', phone: '+1555' });
+      await editGuest({ name: 'N', email: 'e@example.com', phone: '+1555' });
       expect(patchBody(spy)).toMatchObject({ guest_id: 'GUEST9', invite_method: 'email', phone: '+1555' });
     }
   });

@@ -416,25 +416,25 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       inputSchema: updateGuestArgs,
     },
     async (args, ctx) => {
-      const guest = { name: args.name, email: args.email, phone: args.phone };
+      // Merge the guest's stored invite method/phone first, so the preview shows
+      // the exact object the PATCH will send (fleet-audit #436).
+      const body = await client.buildGuestUpdate(args.event_id, args.guest_id, {
+        name: args.name,
+        email: args.email,
+        phone: args.phone,
+      });
       const gate = await confirmWrite(ctx, {
         tool: 'evite_update_guest',
         account: undefined,
         action: 'evite.update_guest',
         message: 'Review and confirm this guest edit:',
         target: args.guest_id,
-        payload: { eventId: args.event_id, guestId: args.guest_id, guest },
-        willSend: {
-          event_id: args.event_id,
-          guest_id: args.guest_id,
-          name: args.name,
-          email: args.email,
-          phone: args.phone,
-        },
+        payload: { eventId: args.event_id, body },
+        willSend: body,
         confirmToken: args.confirmToken,
       });
       if (gate) return gate;
-      const data = await client.updateGuest(args.event_id, args.guest_id, guest);
+      const data = await client.updateGuest(args.event_id, body);
       return minifiedResult(data);
     },
   );

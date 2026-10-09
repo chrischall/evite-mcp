@@ -360,6 +360,39 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     });
   }
 
+  // fleet-audit #438: phone JPEGs put EXIF (APP1, up to 64 KB with its thumbnail)
+  // plus ICC/MPF (APP2) segments ahead of the SOF, past a 64 KB header read.
+  it('reads the frame size of a JPEG whose SOF sits beyond the first 64 KB', async () => {
+    const seg = (marker: number, payloadLen: number) => {
+      const b = Buffer.alloc(4 + payloadLen);
+      b[0] = 0xff;
+      b[1] = marker;
+      b.writeUInt16BE(payloadLen + 2, 2);
+      return b;
+    };
+    const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x0b, 0xb8, 0x0f, 0xa0]); // 4000x3000
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      seg(0xe1, 65_000), // EXIF + thumbnail
+      seg(0xe2, 30_000), // ICC profile
+      seg(0xe2, 1_000), // MPF
+      sof,
+      Buffer.alloc(32),
+      Buffer.from([0xff, 0xd9]),
+    ]);
+    const path = join(tmpdir(), `evite-test-exif-${jpeg.length}.jpg`);
+    writeFileSync(path, jpeg);
+    const spy = uploadFetch();
+    try {
+      await newClient().uploadPhoto('EV', { path, guestId: 'GUEST9' });
+      const reqIdx = spy.mock.calls.findIndex((c) => String(c[0]).includes('/upload/request/'));
+      const reqBody = JSON.parse((spy.mock.calls[reqIdx]![1] as RequestInit).body as string);
+      expect(reqBody).toMatchObject({ mimetype: 'image/jpeg', width: 4000, height: 3000 });
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
   it('runs request → GCS multipart → finish → register, returning the photo id', async () => {
     const spy = uploadFetch();
     const path = writePng();

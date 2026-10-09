@@ -31,6 +31,15 @@ import { createSessionCache, reportCacheWriteFailure } from './session-cache.js'
 const MAX_UPLOAD_BYTES = 20_000_000;
 
 /**
+ * How much of an image file is read for the type sniff and the dimensions. A
+ * phone JPEG's EXIF APP1 segment alone can be 64 KB (embedded thumbnail), with
+ * ICC/MPF APP2 segments after it, so the SOF frame header routinely sits past
+ * 64 KB (fleet-audit #438). 1 MiB comfortably clears an EXIF + ICC + MPF stack
+ * and is still a small fraction of the 20 MB upload cap.
+ */
+const IMAGE_HEAD_BYTES = 1024 * 1024;
+
+/**
  * Resolve an upload path to an absolute one: expand a leading `~` to the home
  * directory (the only shell expansion we do), then resolve against the cwd.
  * Shared with the upload tool's preview so it shows exactly what would be read.
@@ -987,7 +996,7 @@ export class EviteClient {
     // Both file operations live in one try so any read-time I/O error (the
     // file vanishing between awaits, EACCES, …) surfaces as the friendly
     // message rather than a raw Node error. The type sniff and the dimensions
-    // need only the header, so readFileHead pulls just the first 64 KB off disk.
+    // need only the header, so readFileHead pulls just IMAGE_HEAD_BYTES off disk.
     // Nothing leaves the machine until every check below has passed.
     // When EVITE_UPLOAD_DIR is set, both reads are confined to it: a path that
     // resolves (symlinks included) outside those directories is refused before
@@ -996,7 +1005,7 @@ export class EviteClient {
     let head: Buffer;
     let blob: Blob;
     try {
-      head = await readFileHead(abs, 65_536, { ...(roots ? { allowedRoots: roots } : {}) });
+      head = await readFileHead(abs, IMAGE_HEAD_BYTES, { ...(roots ? { allowedRoots: roots } : {}) });
       blob = await fileBlob(abs, { ...(roots ? { allowedRoots: roots } : {}) });
     } catch (e) {
       if (roots && /outside the allowed directories/.test(String(e))) {

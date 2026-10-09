@@ -382,6 +382,18 @@ export interface EviteClientOptions {
 }
 
 /**
+ * Whether {@link res} is a redirect to Evite's sign-in page — how an HTML route
+ * fetched with `redirect: 'manual'` answers an expired session (instead of a
+ * 401/403).
+ */
+function isLoginRedirect(res: Response): boolean {
+  if (res.status < 300 || res.status > 399) return false;
+  const location = res.headers.get('location') ?? '';
+  const path = new URL(location, BASE_URL).pathname;
+  return /\/(?:log-?in|sign-?in|ajax_login)(?:\/|$)/i.test(path);
+}
+
+/**
  * The CDN/WAF vendor whose refusal page {@link res} is, or `null` (also when the
  * body cannot be read). Reads a clone, so the caller's copy stays readable.
  */
@@ -430,6 +442,9 @@ export class EviteClient {
       // not cost a password re-login per call (fleet-audit #100).
       isExpired: async (res) => {
         if (isCsrfRecovered(res)) return false;
+        // A manual-redirect HTML route (duplicate) bounced to the sign-in page:
+        // the session is gone (fleet-audit #437).
+        if (isLoginRedirect(res)) return true;
         // A 401 CDN/WAF refusal page never reached Evite: nothing judged the
         // session, so it is not an expiry — no re-login, no replay
         // (chrischall/mcp-host#1015; mirrors classify403's 'edge' kind).
@@ -1309,17 +1324,22 @@ export class EviteClient {
    * is the `/invitation/{newId}/` segment of the redirect target.
    */
   async duplicateEvent(eventId: string): Promise<DuplicateResult> {
-    const session = await this.sessions.ensure();
     const url = `${BASE_URL}/plus/create/${encodeURIComponent(eventId)}/copy/?previous=my_events`;
-    const headers: Record<string, string> = {
-      cookie: session.cookieHeader,
-      accept: 'text/html',
-    };
-    if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
-
-    const response = await fetch(url, { method: 'GET', headers, redirect: 'manual' });
-    // No re-login on this path, so settle an unexplained 403 with the probe.
-    await this.throwIfAuthFailure(response, 'GET', '/plus/create/{id}/copy/', true);
+    // Through the session manager like every other call: a 401, a dead-session
+    // 403, or a redirect to the sign-in page (how an HTML route reports an
+    // expired session) re-logs-in once and replays (fleet-audit #437).
+    const response = await this.sessions.withSession((session) => {
+      const headers: Record<string, string> = {
+        cookie: session.cookieHeader,
+        accept: 'text/html',
+      };
+      if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
+      return fetch(url, { method: 'GET', headers, redirect: 'manual' });
+    });
+    if (isLoginRedirect(response)) {
+      throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');
+    }
+    await this.throwIfAuthFailure(response, 'GET', '/plus/create/{id}/copy/');
     const location = response.headers.get('location') ?? '';
     const match = location.match(/\/invitation\/([^/?]+)\//);
     if (!match) {

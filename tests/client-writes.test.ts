@@ -950,12 +950,79 @@ describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
     expect(result.customizeUrl).toContain('source_event=EVENTID0');
   });
 
-  it('maps a 403 on a dead session (probe also 403s) to SessionNotAuthenticatedError', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(
-      async () => new Response(null, { status: 403 }) as unknown as Response,
+  // fleet-audit #437: duplicate used to bypass the session manager, so an expired
+  // session never re-logged-in and a login redirect surfaced as a raw 302 error.
+  const copied = () =>
+    new Response(null, {
+      status: 302,
+      headers: { location: '/invitation/NEWID9/customize?source_event=E' },
+    }) as unknown as Response;
+  const toLogin = () =>
+    new Response(null, {
+      status: 302,
+      headers: { location: 'https://www.evite.com/login?next=/plus/create/E/copy/' },
+    }) as unknown as Response;
+
+  it('re-logs-in once and replays when the copy redirects to the login page', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(toLogin()).mockResolvedValueOnce(copied());
+    const resolver = vi.fn(async () => fakeSession);
+    const result = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E');
+    expect(result.newEventId).toBe('NEWID9');
+    expect(resolver).toHaveBeenCalledTimes(2); // initial + one re-login
+    expect(spy).toHaveBeenCalledTimes(2); // original + one replay
+  });
+
+  it('reports a login redirect that survives the re-login as SessionNotAuthenticatedError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => toLogin());
+    const resolver = vi.fn(async () => fakeSession);
+    const err = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(resolver).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-logs-in once and replays on a 401', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('', { status: 401 }) as unknown as Response)
+      .mockResolvedValueOnce(copied());
+    const resolver = vi.fn(async () => fakeSession);
+    const result = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E');
+    expect(result.newEventId).toBe('NEWID9');
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+    // The replay carries the session's cookie + CSRF header, as the original did.
+    const replay = spy.mock.calls[1]![1] as RequestInit & { headers: Record<string, string> };
+    expect(replay.headers.cookie).toBe(fakeSession.cookieHeader);
+    expect(replay.headers[CSRF_HEADER]).toBe('tok123');
+  });
+
+  it('a 403 on a dead session (probe also 403s) re-logs-in and replays', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 403 }) as unknown as Response)
+      .mockResolvedValueOnce(new Response(null, { status: 403 }) as unknown as Response) // probe
+      .mockResolvedValueOnce(copied());
+    const resolver = vi.fn(async () => fakeSession);
+    const result = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E');
+    expect(result.newEventId).toBe('NEWID9');
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('a non-login redirect is not treated as an expiry', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: '/somewhere/else/' } }) as unknown as Response,
     );
-    const client = newClient();
-    await expect(client.duplicateEvent('E')).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
+    const resolver = vi.fn(async () => fakeSession);
+    await expect(new EviteClient({ resolveSession: resolver }).duplicateEvent('E')).rejects.toThrow(/302/);
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it('a redirect with no Location is not treated as an expiry', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 302 }) as unknown as Response);
+    const resolver = vi.fn(async () => fakeSession);
+    await expect(new EviteClient({ resolveSession: resolver }).duplicateEvent('E')).rejects.toThrow(/302/);
+    expect(resolver).toHaveBeenCalledTimes(1);
   });
 
   it('maps a 403 on a live session (probe OK) to a forbidden error', async () => {

@@ -743,6 +743,68 @@ describe('EviteClient — createEvent', () => {
       expect(spy).toHaveBeenCalledTimes(2);
     });
 
+    // fleet-audit #999: the recovery must not adopt a draft that existed before
+    // the create started — that reports a genuine failure as success.
+    it('does not adopt a same-title draft last touched minutes BEFORE the create started', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        { body: { events: [draft('PRE', 'Pool Party', ago(3 * 60_000))], totals: {} } },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+      expect(result.eventId).toBeUndefined();
+    });
+
+    it('judges freshness by the `created` stamp when the list carries one', async () => {
+      // Edited a second ago, but created an hour ago: a pre-existing draft.
+      mockFetch(
+        { status: 500, rawBody: '' },
+        {
+          body: {
+            events: [{ ...draft('EDITED', 'Pool Party', ago(1_000)), created: ago(60 * 60_000) }],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+    });
+
+    it('refuses an unstamped draft when more than one same-title draft exists', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        {
+          body: {
+            events: [draft('NOTS', 'Pool Party', undefined), draft('PRE', 'Pool Party', ago(60 * 60_000))],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+      expect(result.candidates).toEqual([
+        { eventId: 'NOTS', title: 'Pool Party' },
+        { eventId: 'PRE', title: 'Pool Party', updated: expect.any(String) },
+      ]);
+    });
+
+    it('returns "unknown" listing the candidates when several fresh same-title drafts match', async () => {
+      mockFetch(
+        { status: 500, rawBody: '' },
+        {
+          body: {
+            events: [draft('A', 'Pool Party', ago(1_000)), draft('B', 'Pool Party', ago(2_000))],
+            totals: {},
+          },
+        },
+      );
+      const result = (await newClient().createEvent(input)) as Record<string, unknown>;
+      expect(result.created).toBe('unknown');
+      expect(result.eventId).toBeUndefined();
+      expect((result.candidates as Array<{ eventId: string }>).map((c) => c.eventId)).toEqual(['A', 'B']);
+      expect(String(result.note)).toMatch(/do not retry/i);
+    });
+
     it('returns the "unknown" result when the confirming re-list itself fails', async () => {
       mockFetch({ status: 500, rawBody: '' }, { status: 502, rawBody: 'bad gateway' });
       const result = (await newClient().createEvent(input)) as Record<string, unknown>;

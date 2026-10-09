@@ -159,11 +159,25 @@ export class EviteApiError extends Error {
 }
 
 /**
- * How far back (by the list's `updated` stamp) a same-title draft may be and
- * still count as the one a 500'd create just made. Generous, to absorb clock
- * skew between this machine and Evite.
+ * How far before the create started (by the list's `created` stamp, else
+ * `updated`) a same-title draft may be stamped and still count as the one a
+ * 500'd create just made. Clock skew between this machine and Evite is seconds,
+ * not minutes — a wider window adopts a draft the user made just before
+ * (fleet-audit #999).
  */
-const CREATE_RECOVERY_WINDOW_MS = 5 * 60_000;
+const CREATE_RECOVERY_WINDOW_MS = 60_000;
+
+/** A host draft as {@link EviteClient.findFreshDraft} sees it in the events list. */
+interface DraftSummary {
+  event_id: string;
+  title: string;
+  created?: string;
+  updated?: string;
+  [key: string]: unknown;
+}
+
+/** The outcome of matching a 500'd create against the host's drafts. */
+type DraftMatch = { draft: DraftSummary } | { candidates: DraftSummary[] };
 
 /** Health report surfaced by the `evite_healthcheck` tool. */
 export interface EviteHealth {
@@ -1174,8 +1188,9 @@ export class EviteClient {
       if (!(err instanceof EviteApiError) || err.status !== 500) throw err;
     }
 
-    const draft = await this.findFreshDraft(input.title, startedAt).catch(() => undefined);
-    if (draft) {
+    const match = await this.findFreshDraft(input.title, startedAt).catch(() => undefined);
+    if (match && 'draft' in match) {
+      const { draft } = match;
       return {
         created: true,
         eventId: draft.event_id,
@@ -1185,38 +1200,50 @@ export class EviteClient {
           'Do not create it again.',
       };
     }
+    const candidates = match?.candidates ?? [];
     return {
       created: 'unknown',
+      ...(candidates.length > 0
+        ? {
+            candidates: candidates.map((d) => ({
+              eventId: d.event_id,
+              title: d.title,
+              ...(d.created !== undefined ? { created: d.created } : {}),
+              ...(d.updated !== undefined ? { updated: d.updated } : {}),
+            })),
+          }
+        : {}),
       note:
         'Evite answered the create with a 500, which it also does when the draft WAS created, and ' +
-        'the new draft could not be confirmed. Do not retry: check evite_list_events with status ' +
-        '"draft" first — retrying may create a duplicate.',
+        'the new draft could not be confirmed' +
+        (candidates.length > 0 ? ' (same-title drafts are listed under candidates)' : '') +
+        '. Do not retry: check evite_list_events with status "draft" first — retrying may create ' +
+        'a duplicate.',
     };
   }
 
   /**
-   * The newest of the host's drafts titled {@link title} whose `updated` stamp is
-   * within {@link CREATE_RECOVERY_WINDOW_MS} of {@link since} (a draft with no
-   * stamp is accepted on its title alone). Used by {@link createEvent}.
+   * Match a 500'd create against the host's drafts titled {@link title}.
+   *
+   * A draft counts as the one just created only when its `created` stamp (else
+   * `updated`) is no more than {@link CREATE_RECOVERY_WINDOW_MS} before
+   * {@link since}. Exactly one such draft → `{ draft }`. Several → ambiguous,
+   * `{ candidates }`. None stamped fresh: a lone same-title draft with no stamp
+   * at all is accepted on its title; any other same-title drafts are returned as
+   * `{ candidates }` (never adopted — they may predate the create). Used by
+   * {@link createEvent}.
    */
-  private async findFreshDraft(
-    title: string,
-    since: number,
-  ): Promise<{ event_id: string; updated?: string; [key: string]: unknown } | undefined> {
+  private async findFreshDraft(title: string, since: number): Promise<DraftMatch> {
     const { events } = await this.listEvents({ filterBy: 'host', status: ['draft'], numResults: 50 });
-    const stamp = (e: { updated?: string }): number => Date.parse(e.updated ?? '');
-    // Newest first; an unstamped draft ranks as oldest.
-    const rank = (e: { updated?: string }): number => stamp(e) || 0;
-    const candidates = (events as Array<{ event_id?: string; title?: string; updated?: string }>)
-      .filter((e): e is { event_id: string; title: string; updated?: string } =>
-        Boolean(e.event_id) && e.title === title,
-      )
-      .filter((e) => {
-        const t = stamp(e);
-        return Number.isNaN(t) || t >= since - CREATE_RECOVERY_WINDOW_MS;
-      })
-      .sort((a, b) => rank(b) - rank(a));
-    return candidates[0];
+    const stamp = (e: DraftSummary): number => Date.parse(e.created ?? e.updated ?? '');
+    const sameTitle = (events as Array<Partial<DraftSummary>>).filter(
+      (e): e is DraftSummary => Boolean(e.event_id) && e.title === title,
+    );
+    const fresh = sameTitle.filter((e) => stamp(e) >= since - CREATE_RECOVERY_WINDOW_MS);
+    if (fresh.length === 1) return { draft: fresh[0]! };
+    if (fresh.length > 1) return { candidates: fresh };
+    if (sameTitle.length === 1 && Number.isNaN(stamp(sameTitle[0]!))) return { draft: sameTitle[0]! };
+    return { candidates: sameTitle };
   }
 
   /**

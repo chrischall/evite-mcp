@@ -137,6 +137,18 @@ describe('write tool registration', () => {
   });
 });
 
+describe('write tool annotations (fleet-audit #439)', () => {
+  it('marks the in-place overwrite and DELETE tools destructive', async () => {
+    const h = await harnessFor(fakeClient());
+    const byName = new Map((await h.client.listTools()).tools.map((t) => [t.name, t]));
+    for (const name of ['evite_remove_guest', 'evite_update_event', 'evite_update_guest']) {
+      expect(byName.get(name)?.annotations?.destructiveHint, name).toBe(true);
+    }
+    expect(byName.get('evite_remove_guest')?.annotations?.idempotentHint).toBe(true);
+    await h.close();
+  });
+});
+
 describe('evite_rsvp', () => {
   const args = {
     event_id: 'EVENTID0',

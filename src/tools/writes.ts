@@ -347,7 +347,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_update_event',
     {
       description: `Edit an existing Evite event (only the fields you pass change). ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: true }),
       inputSchema: updateEventArgs,
     },
     async (args, ctx) => {
@@ -409,7 +409,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_update_guest',
     {
       description: `Edit a draft (un-sent) guest's name/email/phone on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: true }),
       inputSchema: updateGuestArgs,
     },
     async (args, ctx) => {
@@ -440,7 +440,12 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_remove_guest',
     {
       description: `Remove a draft (un-sent) guest from an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Remove an Evite guest', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({
+        title: 'Remove an Evite guest',
+        readOnly: false,
+        destructive: true,
+        idempotent: true,
+      }),
       inputSchema: removeGuestArgs,
     },
     async (args, ctx) => {

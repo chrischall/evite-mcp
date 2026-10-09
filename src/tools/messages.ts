@@ -14,7 +14,7 @@ export function registerMessageTools(server: McpServer, client: EviteClient): vo
     {
       description:
         "List the messages on an Evite event's Messages tab (GET /services/event/v1/{id}/posts/).",
-      annotations: toolAnnotations({ title: 'List Evite event messages' }),
+      annotations: toolAnnotations({ title: 'List Evite event messages', openWorld: true }),
       inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {

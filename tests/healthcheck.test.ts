@@ -14,10 +14,10 @@ describe('evite_healthcheck', () => {
     await h.close();
   });
 
-  it('carries the shared toolAnnotations shape (title + read-only)', async () => {
+  it('carries the shared toolAnnotations shape (title + read-only + closed-world)', async () => {
     const h = await createTestHarness((server) => registerHealthcheckTools(server, new EviteClient()));
     const tool = (await h.client.listTools()).tools.find((t) => t.name === 'evite_healthcheck');
-    expect(tool?.annotations).toEqual({ title: 'Evite healthcheck', readOnlyHint: true });
+    expect(tool?.annotations).toEqual({ title: 'Evite healthcheck', readOnlyHint: true, openWorldHint: false });
     await h.close();
   });
 });

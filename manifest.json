@@ -37,7 +37,12 @@
         "EVITE_EMAIL": "${user_config.evite_email}",
         "EVITE_PASSWORD": "${user_config.evite_password}",
         "EVITE_SESSION_COOKIE": "${user_config.evite_session_cookie}",
-        "EVITE_UPLOAD_DIR": "${user_config.evite_upload_dir}"
+        "EVITE_UPLOAD_DIR": "${user_config.evite_upload_dir}",
+        "EVITE_DISABLE_FETCHPROXY": "${user_config.evite_disable_fetchproxy}",
+        "EVITE_SESSION_CACHE": "${user_config.evite_session_cache}",
+        "FETCHPROXY_WS_PORT": "${user_config.fetchproxy_ws_port}",
+        "FETCHPROXY_WS_HOST": "${user_config.fetchproxy_ws_host}",
+        "FETCHPROXY_IDENTITY_DIR": "${user_config.fetchproxy_identity_dir}"
       }
     }
   },
@@ -66,6 +71,36 @@
       "type": "string",
       "title": "Photo Upload Directory",
       "description": "Optional. Restrict evite_upload_photo to image files inside this directory (several may be separated by the path delimiter, `:` on macOS/Linux; `~` allowed). A path outside it is refused before anything is read. Unset = any readable image file.",
+      "required": false
+    },
+    "evite_disable_fetchproxy": {
+      "type": "string",
+      "title": "Disable browser bridge (optional)",
+      "description": "Set to true to disable the fetchproxy browser bridge. With the bridge disabled you MUST provide EVITE_EMAIL/EVITE_PASSWORD or EVITE_SESSION_COOKIE. Defaults to false.",
+      "required": false
+    },
+    "evite_session_cache": {
+      "type": "string",
+      "title": "Session cache (optional)",
+      "description": "Set to false to disable the on-disk session cache and re-authenticate on every process start. Defaults to enabled.",
+      "required": false
+    },
+    "fetchproxy_ws_port": {
+      "type": "string",
+      "title": "fetchproxy port (advanced)",
+      "description": "Localhost port of the fetchproxy concentrator the ContextMint Bridge extension connects to (default 37149). Every MCP on one machine shares it, so move it for all of them or not at all.",
+      "required": false
+    },
+    "fetchproxy_ws_host": {
+      "type": "string",
+      "title": "fetchproxy bind address (advanced)",
+      "description": "Bind interface for the fetchproxy concentrator, a literal IP only (default 127.0.0.1). Keep on loopback; it exists for hosted deployments that run each MCP in its own network namespace.",
+      "required": false
+    },
+    "fetchproxy_identity_dir": {
+      "type": "string",
+      "title": "fetchproxy identity directory (advanced)",
+      "description": "Absolute path where the fetchproxy long-term identity keypair is stored (default ~/.fetchproxy/identity/).",
       "required": false
     }
   },

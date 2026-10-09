@@ -15,7 +15,7 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
       description:
         'List the guests for an Evite event (GET /services/event/v1/{id}/guests/): name, RSVP response, ' +
         'head counts, delivery status, and more.',
-      annotations: toolAnnotations({ title: 'List Evite event guests' }),
+      annotations: toolAnnotations({ title: 'List Evite event guests', openWorld: true }),
       inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {
@@ -30,7 +30,7 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
       description:
         'Get the RSVP summary for an Evite event (yes/no/maybe/noReply plus adult/kid head counts). ' +
         'Derived from the event guests endpoint.',
-      annotations: toolAnnotations({ title: 'Evite RSVP summary' }),
+      annotations: toolAnnotations({ title: 'Evite RSVP summary', openWorld: true }),
       inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {

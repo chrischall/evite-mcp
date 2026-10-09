@@ -47,6 +47,36 @@
           "description": "Absolute path for the session cache file. Defaults to $MCP_DATA_DIR/.evite-mcp/session.json.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "EVITE_DISABLE_FETCHPROXY",
+          "description": "Set to true to disable the fetchproxy browser bridge. With the bridge disabled you MUST provide EVITE_EMAIL/EVITE_PASSWORD or EVITE_SESSION_COOKIE. Defaults to false.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "EVITE_UPLOAD_DIR",
+          "description": "Optional. Restrict evite_upload_photo to image files inside this directory (several may be separated by the path delimiter, `:` on macOS/Linux; `~` allowed). A path outside it is refused before anything is read. Unset = any readable image file.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FETCHPROXY_WS_PORT",
+          "description": "Localhost port of the fetchproxy concentrator the ContextMint Bridge extension connects to (default 37149). Every MCP on one machine shares it, so move it for all of them or not at all.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FETCHPROXY_WS_HOST",
+          "description": "Bind interface for the fetchproxy concentrator, a literal IP only (default 127.0.0.1). Keep on loopback; it exists for hosted deployments that run each MCP in its own network namespace.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FETCHPROXY_IDENTITY_DIR",
+          "description": "Absolute path where the fetchproxy long-term identity keypair is stored (default ~/.fetchproxy/identity/).",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

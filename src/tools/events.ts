@@ -41,7 +41,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
       description:
         'List your Evite events (GET /services/events/v1/). Returns events plus a totals breakdown. ' +
         'filterBy=others returns events where you are a guest.',
-      annotations: toolAnnotations({ title: 'List Evite events' }),
+      annotations: toolAnnotations({ title: 'List Evite events', openWorld: true }),
       inputSchema: z.object({ ...listEventsArgs.shape, view: viewArg() }),
     },
     async (args) => {
@@ -61,7 +61,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Get a single Evite event detail (GET /services/event/v1/{id}): event, settings, location, and more.',
-      annotations: toolAnnotations({ title: 'Get Evite event detail' }),
+      annotations: toolAnnotations({ title: 'Get Evite event detail', openWorld: true }),
       inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {
@@ -79,7 +79,7 @@ export function registerEventTools(server: McpServer, client: EviteClient): void
         '"birthday/kids-teens/kids-birthday", "party", "wedding", or "baby-kids/baby/baby-shower". ' +
         'Set free_only:true to list only free templates. Returns each template’s slug (= ' +
         'template_name) and a readable display name.',
-      annotations: toolAnnotations({ title: 'List Evite invitation templates' }),
+      annotations: toolAnnotations({ title: 'List Evite invitation templates', openWorld: true }),
       inputSchema: z.object({ ...listTemplatesArgs.shape, view: viewArg() }),
     },
     async (args) => {

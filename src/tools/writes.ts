@@ -152,7 +152,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_rsvp',
     {
       description: `RSVP for a guest on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false, destructive: true }),
+      annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: rsvpArgs,
     },
     async (args, ctx) => {
@@ -192,7 +192,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Send a private message to one Evite event guest. This really notifies the guest. ' +
         'Sent as the event host (Evite delivers per-guest chat over Firebase, not REST), so ' +
         `only a host can use it. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false, destructive: true }),
+      annotations: toolAnnotations({ title: 'Message an Evite event guest', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: sendMessageArgs,
     },
     async (args, ctx) => {
@@ -223,7 +223,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Broadcast a message to whole RSVP segments of an Evite event at once (e.g. everyone ' +
         `who replied yes/maybe). This really emails every guest in those segments. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false, destructive: true }),
+      annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: broadcastArgs,
     },
     async (args, ctx) => {
@@ -259,7 +259,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         "Upload a local image to an Evite event's shared photo gallery. This really adds the " +
         `photo to the event album. Needs your guest_id on the event (from evite_list_guests). ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: uploadPhotoArgs,
     },
     async (args, ctx) => {
@@ -310,7 +310,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         'Evite answers a create with a 500 even when the draft IS created; this tool handles that ' +
         'by re-listing your drafts, and returns created:true with the eventId, or created:"unknown" ' +
         'when it cannot confirm — never call it again for the same event; check the drafts instead.',
-      annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Create an Evite event', readOnly: false, destructive: false, openWorld: true }),
       inputSchema: createEventArgs,
     },
     async (args, ctx) => {
@@ -352,7 +352,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_update_event',
     {
       description: `Edit an existing Evite event (only the fields you pass change). ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: true }),
+      annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: updateEventArgs,
     },
     async (args, ctx) => {
@@ -390,7 +390,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         "Add guests to an event's draft (un-sent) guest list. Nothing is emailed until you " +
         `evite_send. ${CONFIRM_FLOW_SENTENCE} ` +
         'NB: guests only persist on a finalized (sent/sending) event, not a bare new draft.',
-      annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Add guests to an Evite event', readOnly: false, destructive: false, openWorld: true }),
       inputSchema: addGuestArgs,
     },
     async (args, ctx) => {
@@ -414,7 +414,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     'evite_update_guest',
     {
       description: `Edit a draft (un-sent) guest's name/email/phone on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: true }),
+      annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: updateGuestArgs,
     },
     async (args, ctx) => {
@@ -450,6 +450,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         readOnly: false,
         destructive: true,
         idempotent: true,
+        openWorld: true,
       }),
       inputSchema: removeGuestArgs,
     },
@@ -476,7 +477,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Send the invitation to the ready-to-send (draft) guests of an event ("Send now"). ' +
         `THIS EMAILS GUESTS. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false, destructive: true }),
+      annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: eventIdArgs,
     },
     async (args, ctx) => {
@@ -510,6 +511,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         readOnly: false,
         idempotent: true,
         destructive: true,
+        openWorld: true,
       }),
       inputSchema: eventIdArgs,
     },
@@ -543,6 +545,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         readOnly: false,
         idempotent: true,
         destructive: false,
+        openWorld: true,
       }),
       inputSchema: eventIdArgs,
     },
@@ -569,7 +572,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       description:
         'Duplicate an Evite event into a fresh draft (the "Duplicate event" action). Returns the ' +
         `new draft event id. ${CONFIRM_FLOW_SENTENCE}`,
-      annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false, destructive: false }),
+      annotations: toolAnnotations({ title: 'Duplicate an Evite event', readOnly: false, destructive: false, openWorld: true }),
       inputSchema: eventIdArgs,
     },
     async (args, ctx) => {

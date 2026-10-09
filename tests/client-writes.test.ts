@@ -1080,6 +1080,17 @@ describe('EviteClient — duplicateEvent (VERIFIED endpoint)', () => {
     expect(resolver).toHaveBeenCalledTimes(1);
   });
 
+  it('a redirect with a malformed Location is not treated as an expiry (no TypeError)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: 'http://[' } }) as unknown as Response,
+    );
+    const resolver = vi.fn(async () => fakeSession);
+    const err = await new EviteClient({ resolveSession: resolver }).duplicateEvent('E').catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect(String((err as Error).message)).toMatch(/302/);
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
   it('maps a 403 on a live session (probe OK) to a forbidden error', async () => {
     mockFetch({ status: 403, rawBody: '' }, { body: { events: [], totals: {} } });
     const err = await newClient().duplicateEvent('E').catch((e: unknown) => e);

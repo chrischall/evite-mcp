@@ -396,7 +396,14 @@ export interface EviteClientOptions {
 function isLoginRedirect(res: Response): boolean {
   if (res.status < 300 || res.status > 399) return false;
   const location = res.headers.get('location') ?? '';
-  const path = new URL(location, BASE_URL).pathname;
+  let path: string;
+  try {
+    path = new URL(location, BASE_URL).pathname;
+  } catch {
+    // A malformed Location can't be a sign-in redirect; let the caller's usual
+    // error path report the response instead of a TypeError from inside isExpired.
+    return false;
+  }
   return /\/(?:log-?in|sign-?in|ajax_login)(?:\/|$)/i.test(path);
 }
 

@@ -325,6 +325,13 @@ export interface GuestDraft {
   email: string;
 }
 
+/** A stored draft guest as the draft guest list returns it (fields used here). */
+interface DraftGuestRecord {
+  guest_id?: string;
+  phone?: string | null;
+  invite_method?: string | null;
+}
+
 /** New values for a draft guest ({@link EviteClient.updateGuest}). */
 export interface GuestPatch {
   name: string;
@@ -1142,16 +1149,40 @@ export class EviteClient {
    * VERIFIED (live capture 2026-06-01): the site issues this PATCH with the full
    * guest object `{guest_id, email, name, phone, event_id, invite_method}`; the
    * `guest_id` selects the guest, the other fields are the new values.
+   *
+   * Because the PATCH replaces every field, the guest's current `invite_method`
+   * and `phone` are read from the draft list first and kept unless the patch
+   * overrides the phone — otherwise renaming a text-invited guest flipped them to
+   * email and erased their number (fleet-audit #436). If that read fails or does
+   * not list the guest, the edit still goes ahead with the previous defaults
+   * (`email`, the given phone or blank).
    */
   async updateGuest(eventId: string, guestId: string, patch: GuestPatch): Promise<unknown> {
+    const current = await this.findDraftGuest(eventId, guestId).catch(() => undefined);
     return this.write('PATCH', `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`, {
       guest_id: guestId,
       event_id: eventId,
-      invite_method: 'email',
+      invite_method: current?.invite_method || 'email',
       name: patch.name,
       email: patch.email,
-      phone: patch.phone ?? '',
+      phone: patch.phone ?? current?.phone ?? '',
     });
+  }
+
+  /**
+   * One guest from the event's draft guest list —
+   * `GET /ajax/event/{id}/guestlist/draft/?…&per_page=5000` →
+   * `{ guests: { page: [DraftGuest…], … } }` (see docs/EVITE-API.md).
+   */
+  private async findDraftGuest(eventId: string, guestId: string): Promise<DraftGuestRecord | undefined> {
+    const res = await this.get<{ guests?: { page?: unknown } }>(
+      `/ajax/event/${encodeURIComponent(eventId)}/guestlist/draft/`,
+      { search_by: 'all', search_type: 'contains', reverse: 'false', per_page: 5000 },
+    );
+    const page = res.guests?.page;
+    return Array.isArray(page)
+      ? (page as DraftGuestRecord[]).find((g) => g?.guest_id === guestId)
+      : undefined;
   }
 
   /**

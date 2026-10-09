@@ -645,18 +645,32 @@ describe('EviteClient — addGuest (VERIFIED endpoint)', () => {
 });
 
 describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () => {
-  it('PATCHes the draft endpoint with the full guest object', async () => {
-    const spy = mockFetch({ body: { ok: true } });
-    const client = newClient();
-    await client.updateGuest('EVENTID0', 'GUEST9', { name: 'Renamed', email: 'r@example.com' });
+  // The draft list read updateGuest merges from (documented capture shape:
+  // `{ guests: { page: [DraftGuest…], … } }`).
+  const draftList = (...guests: Array<Record<string, unknown>>) => ({
+    body: { already_sent: false, guests: { page: guests, current_page: 1, has_next: false, count: guests.length } },
+  });
+  const patchBody = (spy: ReturnType<typeof mockFetch>) => bodyOf(spy, 1);
 
-    const url = spy.mock.calls[0]![0] as string;
-    const init = spy.mock.calls[0]![1] as RequestInit;
+  it('reads the draft list, then PATCHes the draft endpoint with the full guest object', async () => {
+    const spy = mockFetch(
+      draftList({ guest_id: 'GUEST9', name: 'Old', email: 'o@example.com', phone: '', invite_method: 'email' }),
+      { body: { ok: true } },
+    );
+    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'Renamed', email: 'r@example.com' });
+
+    const listUrl = spy.mock.calls[0]![0] as string;
+    expect(listUrl).toContain('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/?');
+    expect(listUrl).toContain('per_page=5000');
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe('GET');
+
+    const url = spy.mock.calls[1]![0] as string;
+    const init = spy.mock.calls[1]![1] as RequestInit;
     expect(url).toBe('https://www.evite.com/ajax/event/EVENTID0/guestlist/draft/');
     expect(init.method).toBe('PATCH');
-    expect(headersOf(spy)[CSRF_HEADER]).toBe('tok123');
+    expect(headersOf(spy, 1)[CSRF_HEADER]).toBe('tok123');
     // Verified live: PATCH body = {guest_id, event_id, invite_method, name, email, phone}.
-    expect(JSON.parse(init.body as string)).toEqual({
+    expect(patchBody(spy)).toEqual({
       guest_id: 'GUEST9',
       event_id: 'EVENTID0',
       invite_method: 'email',
@@ -664,6 +678,47 @@ describe('EviteClient — updateGuest / removeGuest (VERIFIED endpoints)', () =>
       email: 'r@example.com',
       phone: '',
     });
+  });
+
+  // fleet-audit #436: renaming a text-invited guest flipped them to email and
+  // erased their phone number.
+  it("keeps the guest's current invite method and phone when the patch omits phone", async () => {
+    const spy = mockFetch(
+      draftList(
+        { guest_id: 'OTHER', phone: '+15550000000', invite_method: 'email' },
+        { guest_id: 'GUEST9', name: 'Old', email: '', phone: '+15551234567', invite_method: 'sms' },
+      ),
+      { body: { ok: true } },
+    );
+    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'Renamed', email: 'r@example.com' });
+    expect(patchBody(spy)).toMatchObject({ invite_method: 'sms', phone: '+15551234567' });
+  });
+
+  it('an explicit phone overrides the current one (invite method still kept)', async () => {
+    const spy = mockFetch(
+      draftList({ guest_id: 'GUEST9', phone: '+15551234567', invite_method: 'sms' }),
+      { body: { ok: true } },
+    );
+    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'N', email: 'e@example.com', phone: '+15559999999' });
+    expect(patchBody(spy)).toMatchObject({ invite_method: 'sms', phone: '+15559999999' });
+  });
+
+  it("falls back to email and the given phone when the guest's current record has none", async () => {
+    const spy = mockFetch(
+      draftList({ guest_id: 'GUEST9', phone: null, invite_method: null }),
+      { body: { ok: true } },
+    );
+    await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'N', email: 'e@example.com' });
+    expect(patchBody(spy)).toMatchObject({ invite_method: 'email', phone: '' });
+  });
+
+  it('still edits the guest when the draft list cannot be read or does not list them', async () => {
+    for (const listing of [{ status: 500, rawBody: 'boom' }, { body: { guests: {} } }, draftList({ guest_id: 'OTHER' })]) {
+      vi.restoreAllMocks();
+      const spy = mockFetch(listing, { body: { ok: true } });
+      await newClient().updateGuest('EVENTID0', 'GUEST9', { name: 'N', email: 'e@example.com', phone: '+1555' });
+      expect(patchBody(spy)).toMatchObject({ guest_id: 'GUEST9', invite_method: 'email', phone: '+1555' });
+    }
   });
 
   it('DELETEs the per-guest draft path with no body', async () => {

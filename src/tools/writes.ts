@@ -126,7 +126,10 @@ const updateGuestArgs = z.object({
   guest_id: z.string().min(1).describe('Draft guest id to edit (guest_id from the guest list).'),
   name: z.string().min(1).describe('New guest name.'),
   email: z.string().min(1).describe('New guest email address.'),
-  phone: z.string().optional().describe('New guest phone (optional).'),
+  phone: z
+    .string()
+    .optional()
+    .describe("New guest phone (optional; omitted keeps the guest's current phone and invite method)."),
   confirmToken: confirmTokenParam,
 });
 

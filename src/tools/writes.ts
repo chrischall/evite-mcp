@@ -19,8 +19,10 @@ import { IMAGE_MIMETYPES } from '../image-meta.js';
 // shared confirmWrite:
 //   - a client that supports elicitation gets a real confirmation prompt, whose
 //     acceptance is bound to this exact write;
-//   - otherwise (claude.ai, Claude Desktop) the first call performs NO network
-//     call and returns the preview plus a `confirmToken`; only a repeat call
+//   - otherwise (claude.ai, Claude Desktop) the first call performs NO write —
+//     at most a read-only GET to build an exact preview (evite_update_guest
+//     reads the draft guest list via buildGuestUpdate) — and returns the
+//     preview plus a `confirmToken`; only a repeat call
 //     with that token — bound to this tool, the target, the exact payload and
 //     the displayed preview, single-use, expiring — performs the write.
 //     MCP_CONFIRM_MODE (ask-user | auto | refuse) picks how that fallback behaves.

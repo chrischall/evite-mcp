@@ -23,7 +23,7 @@ Six read tools (all read-only), thirteen confirmed write tools, plus `evite_heal
 
 ### Write tools (confirmed)
 
-Every write tool **asks you to confirm before it sends anything**. A client that can show a confirmation prompt (Claude Code) shows one with the exact values that would be sent (unless `MCP_CONFIRM_ELICITATION=off`). Elsewhere (claude.ai, Claude Desktop) the first call performs no network call and returns that preview plus a `confirmToken`; only a repeat call with the token performs the write. The token is single-use, expires, and is bound to the tool and the exact values — change anything and it is refused (`DRAFT_CHANGED`) with a fresh preview. See [Confirmations](#confirmations). Endpoints are verified; the CSRF token (`X-CSRFToken`, read fresh per request as it rotates) is attached centrally.
+Every write tool **asks you to confirm before it sends anything**. A client that can show a confirmation prompt (Claude Code) shows one with the exact values that would be sent (unless `MCP_CONFIRM_ELICITATION=off`). Elsewhere (claude.ai, Claude Desktop) the first call performs no write (at most a read-only lookup — e.g. `evite_update_guest` reads the draft guest list to build an exact preview) and returns that preview plus a `confirmToken`; only a repeat call with the token performs the write. The token is single-use, expires, and is bound to the tool and the exact values — change anything and it is refused (`DRAFT_CHANGED`) with a fresh preview. See [Confirmations](#confirmations). Endpoints are verified; the CSRF token (`X-CSRFToken`, read fresh per request as it rotates) is attached centrally.
 
 | Tool | Endpoint | Action |
 | --- | --- | --- |
@@ -47,7 +47,7 @@ The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send
 
 | variable | default | |
 |---|---|---|
-| `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt (claude.ai, Claude Desktop). `ask-user`: two steps — the first call does nothing and returns a preview plus a token, and the model must get your approval in chat before calling again with it. `auto`: the same two steps, but the model may use the token after reviewing the preview itself. `refuse`: writes are refused on such clients. A client that can show prompts (Claude Code) always gets the real prompt, unless `MCP_CONFIRM_ELICITATION=off`. An unrecognised value is treated as `refuse`. |
+| `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt (claude.ai, Claude Desktop). `ask-user`: two steps — the first call writes nothing and returns a preview plus a token, and the model must get your approval in chat before calling again with it. `auto`: the same two steps, but the model may use the token after reviewing the preview itself. `refuse`: writes are refused on such clients. A client that can show prompts (Claude Code) always gets the real prompt, unless `MCP_CONFIRM_ELICITATION=off`. An unrecognised value is treated as `refuse`. |
 | `MCP_CONFIRM_ELICITATION` | `on` | `off` never shows a confirmation prompt, so every client gets the `MCP_CONFIRM_MODE` behaviour. Set it for a client that says it can show prompts but never does (the write hangs — opencode 2.0.x). Any other value is treated as `on`, with a warning on stderr. |
 | `MCP_CONFIRM_TTL_SECONDS` | `600` | How long a token stays valid. |
 | `MCP_CONFIRM_SECRET` | random per process | Signing key; set it only if tokens must survive a server restart. |

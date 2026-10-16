@@ -88,15 +88,15 @@ export class InvalidCredentialsError extends SessionNotAuthenticatedError {
   }
 }
 
-/**
- * Throw a "go authenticate" error pointing the user at the credential env vars.
- * The password is never interpolated.
- */
 /** eviteFetch's deadline expiring — Evite did not answer, the credentials were not judged. */
 function isTimeout(err: unknown): boolean {
   return err instanceof McpToolError && err.kind === 'timeout';
 }
 
+/**
+ * Throw a "go authenticate" error pointing the user at the credential env vars.
+ * The password is never interpolated.
+ */
 function badCredentials(): never {
   const err = new SessionNotAuthenticatedError('Evite', ORIGIN);
   (err as { hint?: string }).hint = BAD_CREDENTIALS_HINT;

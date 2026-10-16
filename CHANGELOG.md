@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.6](https://github.com/chrischall/evite-mcp/compare/v1.3.5...v1.3.6) (2026-10-16)
+
+
+### Bug Fixes
+
+* bound every Evite request, flag unknown write outcomes, confine photo uploads ([#204](https://github.com/chrischall/evite-mcp/issues/204)) ([d5124a9](https://github.com/chrischall/evite-mcp/commit/d5124a96514a2d488d43f8bc3bba57bd78b265ea))
+* **deps:** bump @modelcontextprotocol/server ([#202](https://github.com/chrischall/evite-mcp/issues/202)) ([5c26754](https://github.com/chrischall/evite-mcp/commit/5c26754199d1e3fa04a8b39eb213ad5acae5e624))
+
+
+### Documentation
+
+* **auth:** reattach the badCredentials doc comment to its function ([#206](https://github.com/chrischall/evite-mcp/issues/206)) ([008b4b2](https://github.com/chrischall/evite-mcp/commit/008b4b2e45358bd7b7cde38560c40ae6d1e9ee16))
+
 ## [1.3.5](https://github.com/chrischall/evite-mcp/compare/v1.3.4...v1.3.5) (2026-10-09)
 
 

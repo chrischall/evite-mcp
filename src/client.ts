@@ -26,6 +26,10 @@ import {
   sniffImageMime,
 } from './image-meta.js';
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
+import { eviteFetch } from './http.js';
+
+/** Deadline for the GCS image upload, which carries the file bytes. */
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 /** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
 const MAX_UPLOAD_BYTES = 20_000_000;
@@ -535,7 +539,7 @@ export class EviteClient {
     /* v8 ignore next -- a 403 always follows a resolved session; defensive */
     if (!session) return 'expired';
     try {
-      const probe = await fetch(`${BASE_URL}${SESSION_PROBE_PATH}`, {
+      const probe = await eviteFetch(`${BASE_URL}${SESSION_PROBE_PATH}`, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'application/json' },
       });
@@ -601,7 +605,7 @@ export class EviteClient {
     const url = `${BASE_URL}${path}${qs}`;
 
     const response = await this.sessions.withSession((session) =>
-      fetch(url, {
+      eviteFetch(url, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'application/json' },
       }),
@@ -641,7 +645,7 @@ export class EviteClient {
   /** Authenticated GET returning the raw response text (for the SSR gallery pages). */
   private async getHtml(path: string): Promise<string> {
     const response = await this.sessions.withSession((session) =>
-      fetch(`${BASE_URL}${path}`, {
+      eviteFetch(`${BASE_URL}${path}`, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'text/html' },
       }),
@@ -749,7 +753,9 @@ export class EviteClient {
         'content-type': 'application/json',
       };
       if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
-      return fetch(url, { method, headers, body: payload });
+      // A write that gets no answer may still have landed: eviteFetch reports
+      // it as WriteOutcomeUnknownError, never a retry-me TypeError (#1188).
+      return eviteFetch(url, { method, headers, body: payload }, { write: true });
     };
 
     // ── Two-tier 401/403 recovery, capped at ONE recovery total (never both,
@@ -861,11 +867,16 @@ export class EviteClient {
    */
   private async firebaseIdToken(config: FireConfig, customToken: string): Promise<string> {
     const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(config.apiKey)}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
-    });
+    // A token exchange, not a write: safe to retry, so a plain error on failure.
+    const response = await eviteFetch(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      },
+      { service: 'Firebase sign-in' },
+    );
     // Read the body once and parse defensively: Identity Toolkit answers JSON on
     // both success and error, but a proxy/edge failure can return HTML.
     const raw = await response.text();
@@ -946,15 +957,19 @@ export class EviteClient {
     // Only the dynamic segment we append gets escaped, matching every other
     // dynamic path segment in this file.
     const path = `${auth.refs.messages}/h2g/${encodeURIComponent(recipient.userId)}`;
-    const response = await fetch(`${base}${path}.json?auth=${encodeURIComponent(idToken)}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        createdBy: host.userId,
-        createdAt: { '.sv': 'timestamp' },
-        message: input.message,
-      }),
-    });
+    const response = await eviteFetch(
+      `${base}${path}.json?auth=${encodeURIComponent(idToken)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          createdBy: host.userId,
+          createdAt: { '.sv': 'timestamp' },
+          message: input.message,
+        }),
+      },
+      { write: true, service: 'Evite chat' },
+    );
     // Single body read: RTDB returns `{"name":"<pushId>"}` on success and a JSON
     // (or occasionally plain-text) error otherwise.
     const raw = await response.text();
@@ -1106,7 +1121,13 @@ export class EviteClient {
     const filename = basename(abs) || 'photo';
     form.append('file', blob, filename);
 
-    const gcs = await fetch(ticket.upload_url, { method: 'POST', body: form, redirect: 'manual' });
+    // Not the commit (Step 4 registers the photo), so a plain error on failure;
+    // a longer deadline because this carries the image bytes.
+    const gcs = await eviteFetch(
+      ticket.upload_url,
+      { method: 'POST', body: form, redirect: 'manual' },
+      { service: 'Google Cloud Storage', timeoutMs: UPLOAD_TIMEOUT_MS },
+    );
     // Success is a 303 redirect (to success_action_redirect); accept 2xx too.
     if (gcs.status !== 303 && !gcs.ok) {
       const text = await gcs.text().catch(() => '');
@@ -1391,7 +1412,8 @@ export class EviteClient {
         accept: 'text/html',
       };
       if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
-      return fetch(url, { method: 'GET', headers, redirect: 'manual' });
+      // A GET that CREATES a draft: a dropped connection leaves its outcome unknown.
+      return eviteFetch(url, { method: 'GET', headers, redirect: 'manual' }, { write: true });
     });
     if (isLoginRedirect(response)) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');

@@ -364,6 +364,44 @@ describe('evite_broadcast — bound to the event thread as read (fleet-audit #11
 });
 
 describe('evite_upload_photo', () => {
+  // Uploads are confined to EVITE_UPLOAD_DIR (default ~/Downloads/evite-mcp);
+  // these tests put their files under the OS temp dir and confine there.
+  beforeEach(() => {
+    process.env.EVITE_UPLOAD_DIR = tmpdir();
+  });
+
+  it('refuses a path outside the upload directory BEFORE the gate, revealing nothing about it (#1243)', async () => {
+    guardFetch();
+    const dir = mkdtempSync(join(tmpdir(), 'evite-outside-'));
+    const file = join(dir, 'id_ed25519');
+    writeFileSync(file, Buffer.alloc(4321));
+    process.env.EVITE_UPLOAD_DIR = join(dir, 'uploads');
+    try {
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
+      expect(res.isError).toBe(true);
+      const text = JSON.stringify(res);
+      expect(text).toMatch(/outside the allowed upload directories/);
+      expect(text).not.toMatch(/4321|size_bytes|confirmToken/);
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      await h.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a hidden path inside the upload directory before the gate', async () => {
+    guardFetch();
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: '.ssh/id_ed25519' });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res)).toMatch(/hidden/);
+    expect(JSON.stringify(res)).not.toMatch(/size_bytes|confirmToken/);
+    await h.close();
+  });
+
   it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
@@ -371,11 +409,12 @@ describe('evite_upload_photo', () => {
     const p1 = await phaseOne(h, 'evite_upload_photo', {
       event_id: 'EVENTID0',
       guest_id: 'GUEST9',
-      path: '~/Pictures/cake.jpg',
+      path: 'cake.jpg',
     });
     expect(client.uploadPhoto).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.willSend.path).toBe('~/Pictures/cake.jpg');
+    expect(p1.preview.willSend.path).toBe('cake.jpg');
+    expect(p1.preview.willSend.resolved_path).toBe(join(tmpdir(), 'cake.jpg'));
     await h.close();
   });
 
@@ -390,12 +429,15 @@ describe('evite_upload_photo', () => {
       expect(p1.preview.willSend.resolved_path).toBe(file);
       expect(p1.preview.willSend.size_bytes).toBe(1234);
       // A ~ path resolves against the home directory; a missing file has no size.
+      delete process.env.EVITE_UPLOAD_DIR; // the default root, ~/Downloads/evite-mcp
       const p2 = await phaseOne(h, 'evite_upload_photo', {
         event_id: 'E',
         guest_id: 'G',
-        path: '~/evite-mcp-no-such-file.png',
+        path: '~/Downloads/evite-mcp/evite-mcp-no-such-file.png',
       });
-      expect(p2.preview.willSend.resolved_path).toBe(join(homedir(), 'evite-mcp-no-such-file.png'));
+      expect(p2.preview.willSend.resolved_path).toBe(
+        join(homedir(), 'Downloads', 'evite-mcp', 'evite-mcp-no-such-file.png'),
+      );
       expect(p2.preview.willSend.size_bytes).toBeUndefined();
       await h.close();
     } finally {
@@ -466,11 +508,11 @@ describe('evite_upload_photo', () => {
     await confirmed(h, 'evite_upload_photo', {
       event_id: 'EVENTID0',
       guest_id: 'GUEST9',
-      path: '~/Pictures/cake.jpg',
+      path: 'cake.jpg',
     });
     expect(client.uploadPhoto).toHaveBeenCalledTimes(1);
     expect(client.uploadPhoto).toHaveBeenCalledWith('EVENTID0', {
-      path: '~/Pictures/cake.jpg',
+      path: 'cake.jpg',
       guestId: 'GUEST9',
       mimetype: undefined,
     });

@@ -27,7 +27,7 @@ Three auth tiers, in priority order:
 
 **Session lifecycle** is delegated to `@chrischall/mcp-utils/session`'s **`CookieSessionManager`** (`src/client.ts`): single-flight login, clear-on-settle, and exactly-one re-login-and-replay on a genuine expiry. The resolver is the manager's `login`; `isExpired` flags a 401, and a 403 only when it is a dead session — *except* a response already CSRF-recovered locally (see Quirks). `isPermanentError` caches a rejected email/password (`InvalidCredentialsError`, a `/ajax_login` 401) so a known-bad password is never re-POSTed; a login 429/5xx is a `RateLimitError`/`UnreachableError`, not "check your credentials".
 
-Env vars (also mirrored in `src/config.ts`): `EVITE_EMAIL`, `EVITE_PASSWORD`, `EVITE_SESSION_COOKIE`, `EVITE_DISABLE_FETCHPROXY`, plus `EVITE_UPLOAD_DIR` (optional `evite_upload_photo` directory allow-list, passed as `allowedRoots` to `readFileHead`/`fileBlob`).
+Env vars (also mirrored in `src/config.ts`): `EVITE_EMAIL`, `EVITE_PASSWORD`, `EVITE_SESSION_COOKIE`, `EVITE_DISABLE_FETCHPROXY`, plus `EVITE_UPLOAD_DIR` (the `evite_upload_photo` directory allow-list, default `~/Downloads/evite-mcp` — never unconfined; `src/upload-path.ts` `confineUploadPath` refuses outside/hidden paths before the preview's stat, and the roots are passed again as `allowedRoots` to `readFileHead`/`fileBlob`). Every request goes through `src/http.ts` `eviteFetch` (30 s deadline, MCP cancellation except for the single-flight login, `WriteOutcomeUnknownError` for a write with no answer).
 
 ## Architecture
 

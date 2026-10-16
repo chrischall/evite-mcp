@@ -8,7 +8,7 @@ import {
   toolAnnotations,
 } from '@chrischall/mcp-utils';
 import { statSync } from 'node:fs';
-import { resolveUploadPath, type EviteClient } from '../client.js';
+import { confineUploadPath, type EviteClient } from '../client.js';
 import { IMAGE_MIMETYPES } from '../image-meta.js';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -108,7 +108,11 @@ const uploadPhotoArgs = z.object({
   path: z
     .string()
     .min(1)
-    .describe('Path to the local image file to upload (a leading ~ is expanded). JPEG/PNG/GIF/WebP/HEIC, max 20 MB.'),
+    .describe(
+      'Path to the local image file to upload, inside the upload directory (EVITE_UPLOAD_DIR, default ' +
+        '~/Downloads/evite-mcp; a relative path is resolved there, a leading ~ is expanded; hidden files are ' +
+        'refused). JPEG/PNG/GIF/WebP/HEIC, max 20 MB.',
+    ),
   mimetype: z
     .enum(IMAGE_MIMETYPES)
     .optional()
@@ -313,7 +317,10 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       // and modification time are read on every call and bound into the
       // token, so a file swapped or edited between the preview and the upload
       // (even for one of the same size) is refused as DRAFT_CHANGED.
-      const resolved = resolveUploadPath(args.path);
+      // Confinement first (fleet-audit #1243): a path outside the upload
+      // directory, or a hidden one, is refused here — before the stat, so the
+      // refusal says nothing about whether the file exists or how big it is.
+      const resolved = confineUploadPath(args.path);
       let size: number | undefined;
       let mtimeMs: number | undefined;
       try {

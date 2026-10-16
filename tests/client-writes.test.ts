@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { writeFileSync, rmSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { writeFileSync, rmSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import {
@@ -45,7 +45,17 @@ function headersOf(spy: ReturnType<typeof mockFetch>, n = 0): Record<string, str
   return init.headers as Record<string, string>;
 }
 
-afterEach(() => vi.restoreAllMocks());
+// Upload tests write their fixtures under the OS temp dir; confine uploads there
+// (the confinement describe below sets its own EVITE_UPLOAD_DIR per test).
+const savedUploadDir = process.env.EVITE_UPLOAD_DIR;
+beforeEach(() => {
+  process.env.EVITE_UPLOAD_DIR = tmpdir();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  if (savedUploadDir === undefined) delete process.env.EVITE_UPLOAD_DIR;
+  else process.env.EVITE_UPLOAD_DIR = savedUploadDir;
+});
 
 describe('EviteClient — rsvp', () => {
   it('PUTs the guest resource with the CSRF header and rsvp fields', async () => {
@@ -442,7 +452,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
   it('throws on an unreadable file before any network call', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
     await expect(
-      newClient().uploadPhoto('EV', { path: '/no/such/file.png', guestId: 'G' }),
+      newClient().uploadPhoto('EV', { path: join(tmpdir(), 'evite-no-such-file.png'), guestId: 'G' }),
     ).rejects.toThrow(/Cannot read image file/);
     expect(spy).not.toHaveBeenCalled();
   });
@@ -1181,7 +1191,10 @@ describe('EviteClient — uploadPhoto error/edge branches', () => {
 
   it('expands a ~ path before reading (and fails cleanly when the file is absent)', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
-    await expect(newClient().uploadPhoto('EV', { path: '~/evite-mcp-no-such-file.png', guestId: 'G' })).rejects.toThrow(/Cannot read image file/);
+    delete process.env.EVITE_UPLOAD_DIR; // the default root, ~/Downloads/evite-mcp
+    await expect(
+      newClient().uploadPhoto('EV', { path: '~/Downloads/evite-mcp/evite-mcp-no-such-file.png', guestId: 'G' }),
+    ).rejects.toThrow(/Cannot read image file/);
     expect(spy).not.toHaveBeenCalled();
   });
 });
@@ -1442,11 +1455,55 @@ describe('EviteClient — uploadPhoto confinement (EVITE_UPLOAD_DIR)', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('unset EVITE_UPLOAD_DIR leaves uploads unconfined (unchanged behaviour)', async () => {
+  it('unset EVITE_UPLOAD_DIR confines uploads to ~/Downloads/evite-mcp (fleet-audit #1243)', async () => {
     const path = join(outside, 'photo.png');
     writeFileSync(path, PNG);
+    const spy = successFetch();
+    const err = await newClient().uploadPhoto('EV', { path, guestId: 'G' }).catch((e: unknown) => e);
+    expect((err as McpToolError).message).toMatch(/outside the allowed upload directories/);
+    expect((err as McpToolError).hint).toMatch(/Downloads\/evite-mcp/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a hidden file or a file under a hidden directory inside the upload directory', async () => {
+    process.env.EVITE_UPLOAD_DIR = allowed;
+    mkdirSync(join(allowed, '.ssh'));
+    writeFileSync(join(allowed, '.ssh', 'photo.png'), PNG);
+    writeFileSync(join(allowed, '.photo.png'), PNG);
+    const spy = successFetch();
+    for (const path of [join(allowed, '.ssh', 'photo.png'), join(allowed, '.photo.png')]) {
+      const err = await newClient().uploadPhoto('EV', { path, guestId: 'G' }).catch((e: unknown) => e);
+      expect((err as McpToolError).message).toMatch(/hidden/);
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a symlink inside the upload directory that points outside it', async () => {
+    process.env.EVITE_UPLOAD_DIR = allowed;
+    const target = join(outside, 'photo.png');
+    writeFileSync(target, PNG);
+    symlinkSync(target, join(allowed, 'link.png'));
+    const spy = successFetch();
+    const err = await newClient().uploadPhoto('EV', { path: join(allowed, 'link.png'), guestId: 'G' }).catch((e: unknown) => e);
+    expect((err as McpToolError).message).toMatch(/outside the allowed upload directories/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a symlink to a hidden file elsewhere in the upload directory', async () => {
+    process.env.EVITE_UPLOAD_DIR = allowed;
+    writeFileSync(join(allowed, '.secret.png'), PNG);
+    symlinkSync(join(allowed, '.secret.png'), join(allowed, 'innocent.png'));
+    const spy = successFetch();
+    const err = await newClient().uploadPhoto('EV', { path: join(allowed, 'innocent.png'), guestId: 'G' }).catch((e: unknown) => e);
+    expect((err as McpToolError).message).toMatch(/hidden/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('resolves a relative path against the upload directory', async () => {
+    process.env.EVITE_UPLOAD_DIR = allowed;
+    writeFileSync(join(allowed, 'photo.png'), PNG);
     successFetch();
-    const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+    const result = await newClient().uploadPhoto('EV', { path: 'photo.png', guestId: 'G' });
     expect(result.photoId).toBe('PID');
   });
 });

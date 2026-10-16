@@ -56,7 +56,7 @@ The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send
 
 | variable | default | |
 |---|---|---|
-| `EVITE_UPLOAD_DIR` | unset (any path) | Restrict `evite_upload_photo` to files inside these directories — one or more, separated by the platform path delimiter (`:` on macOS/Linux, `;` on Windows); `~` is allowed. A path that resolves (symlinks included) outside them is refused before any byte is read or uploaded. Recommended, since the model chooses the path. |
+| `EVITE_UPLOAD_DIR` | `~/Downloads/evite-mcp` | The directories `evite_upload_photo` may read from — one or more, separated by the platform path delimiter (`:` on macOS/Linux, `;` on Windows); `~` is allowed. A relative path is resolved against the first one. A path outside them (symlinks included), or a hidden file or directory inside them, is refused before the file is even looked at. Put photos to upload in `~/Downloads/evite-mcp`, or point this elsewhere. |
 
 ## Architecture
 

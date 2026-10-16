@@ -1,5 +1,4 @@
-import { homedir } from 'node:os';
-import { basename, resolve } from 'node:path';
+import { basename } from 'node:path';
 import {
   buildQueryString,
   CookieJar,
@@ -17,7 +16,6 @@ import {
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
 import { InvalidCredentialsError } from './auth-login.js';
-import { config } from './config.js';
 import {
   IMAGE_MIMETYPES,
   imageDimensions,
@@ -27,6 +25,9 @@ import {
 } from './image-meta.js';
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 import { eviteFetch } from './http.js';
+import { confineUploadPath, uploadRoots } from './upload-path.js';
+
+export { resolveUploadPath, confineUploadPath } from './upload-path.js';
 
 /** Deadline for the GCS image upload, which carries the file bytes. */
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -42,15 +43,6 @@ const MAX_UPLOAD_BYTES = 20_000_000;
  * and is still a small fraction of the 20 MB upload cap.
  */
 const IMAGE_HEAD_BYTES = 1024 * 1024;
-
-/**
- * Resolve an upload path to an absolute one: expand a leading `~` to the home
- * directory (the only shell expansion we do), then resolve against the cwd.
- * Shared with the upload tool's preview so it shows exactly what would be read.
- */
-export function resolveUploadPath(p: string): string {
-  return resolve(p === '~' || p.startsWith('~/') ? homedir() + p.slice(1) : p);
-}
 
 /** The session-resolver signature the client depends on (injectable in tests). */
 export type SessionResolver = (opts?: ResolveSessionOptions) => Promise<ResolvedSession>;
@@ -1033,7 +1025,8 @@ export class EviteClient {
    * mimetype declared in step 1 must match the Blob's type in step 2.
    */
   async uploadPhoto(eventId: string, input: UploadPhotoInput): Promise<UploadPhotoResult> {
-    const abs = resolveUploadPath(input.path);
+    // Confined to the upload directory before anything else (fleet-audit #1243).
+    const abs = confineUploadPath(input.path);
     // SECURITY (fleet-audit #102): the path comes from the model, and guest-authored
     // content (messages, RSVP notes) reaches the model verbatim — a prompt-injection
     // channel. So the only thing trusted is the file's own bytes: whatever the
@@ -1052,17 +1045,20 @@ export class EviteClient {
     // message rather than a raw Node error. The type sniff and the dimensions
     // need only the header, so readFileHead pulls just IMAGE_HEAD_BYTES off disk.
     // Nothing leaves the machine until every check below has passed.
-    // When EVITE_UPLOAD_DIR is set, both reads are confined to it: a path that
-    // resolves (symlinks included) outside those directories is refused before
-    // a single byte is read, let alone uploaded.
-    const roots = config.uploadRoots();
+    // Both reads are confined to the upload directories again at open time: a
+    // path that resolves (symlinks included) outside them is refused before a
+    // single byte is read, let alone uploaded.
+    const roots = uploadRoots();
     let head: Buffer;
     let blob: Blob;
     try {
-      head = await readFileHead(abs, IMAGE_HEAD_BYTES, { ...(roots ? { allowedRoots: roots } : {}) });
-      blob = await fileBlob(abs, { ...(roots ? { allowedRoots: roots } : {}) });
+      head = await readFileHead(abs, IMAGE_HEAD_BYTES, { allowedRoots: roots });
+      blob = await fileBlob(abs, { allowedRoots: roots });
     } catch (e) {
-      if (roots && /outside the allowed directories/.test(String(e))) {
+      // confineUploadPath already refused an outside path; this catches a file
+      // swapped for an outbound symlink between that check and the open.
+      /* v8 ignore next 5 -- a check-to-open race; the shared read helper refuses it */
+      if (/outside the allowed directories/.test(String(e))) {
         throw new McpToolError(`Refusing to upload "${input.path}": it is outside the allowed upload directories.`, {
           hint: 'EVITE_UPLOAD_DIR restricts which directories photos can be uploaded from — move the photo into one of them, or change EVITE_UPLOAD_DIR.',
         });

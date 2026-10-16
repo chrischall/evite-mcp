@@ -21,6 +21,12 @@ function fakeClient() {
     rsvp: vi.fn(async () => ({ ok: true })),
     sendMessage: vi.fn(async () => ({ ok: true })),
     broadcast: vi.fn(async () => ({ ok: true })),
+    listMessages: vi.fn(async () => ({
+      posts: [
+        { id: 'POST1', message: 'older', created: '2026-05-19T10:00:00.000Z' },
+        { id: 'POST2', message: 'newest', created: '2026-05-20T12:00:00.000Z' },
+      ],
+    })),
     createEvent: vi.fn(async () => ({ event: { id: 'NEW' } })),
     updateEvent: vi.fn(async () => ({ event: { id: 'EVENTID0' } })),
     addGuest: vi.fn(async () => ({ ok: true })),
@@ -54,6 +60,7 @@ function fakeClient() {
     reinstateEvent: ReturnType<typeof vi.fn>;
     duplicateEvent: ReturnType<typeof vi.fn>;
     broadcast: ReturnType<typeof vi.fn>;
+    listMessages: ReturnType<typeof vi.fn>;
     uploadPhoto: ReturnType<typeof vi.fn>;
   };
 }
@@ -276,6 +283,82 @@ describe('evite_broadcast', () => {
       groups: ['yes', 'maybe'],
       participantCount: 4,
     });
+    await h.close();
+  });
+});
+
+describe('evite_broadcast — bound to the event thread as read (fleet-audit #1188)', () => {
+  const args = { event_id: 'EVENTID0', message: 'See you Saturday!', groups: ['yes'] };
+
+  it('phase 1 reads the messages thread and shows its latest post', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    expect(client.listMessages).toHaveBeenCalledWith('EVENTID0');
+    const preview = p1.preview as unknown as Record<string, any>;
+    expect(preview.messages_thread).toEqual({
+      post_count: 2,
+      latest_post_id: 'POST2',
+      latest_post_at: '2026-05-20T12:00:00.000Z',
+    });
+    expect(preview.caveat).toMatch(/evite_list_messages/);
+    await h.close();
+  });
+
+  it('a post landing between preview and confirm is refused as DRAFT_CHANGED and broadcasts nothing', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    client.listMessages.mockResolvedValueOnce({
+      posts: [
+        { id: 'POST1', created: '2026-05-19T10:00:00.000Z' },
+        { id: 'POST2', created: '2026-05-20T12:00:00.000Z' },
+        { id: 'POST3', created: '2026-05-21T08:00:00.000Z' },
+      ],
+    });
+    const res = await h.callTool('evite_broadcast', { ...args, confirmToken: p1.confirmToken });
+    expect(JSON.stringify(parseToolResult(res))).toMatch(/DRAFT_CHANGED/);
+    expect(client.broadcast).not.toHaveBeenCalled();
+    await h.close();
+  });
+
+  it('accepts the other post field spellings and an empty thread', async () => {
+    const client = fakeClient();
+    client.listMessages.mockResolvedValueOnce({ posts: [{ postId: 'P9', createdAt: 'T9' }] });
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    expect((p1.preview as unknown as Record<string, any>).messages_thread).toEqual({
+      post_count: 1,
+      latest_post_id: 'P9',
+      latest_post_at: 'T9',
+    });
+    client.listMessages.mockResolvedValueOnce({ posts: [] });
+    const p2 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'other' });
+    expect((p2.preview as unknown as Record<string, any>).messages_thread).toEqual({ post_count: 0 });
+    client.listMessages.mockResolvedValueOnce({});
+    const p3 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'third' });
+    expect((p3.preview as unknown as Record<string, any>).messages_thread).toEqual({ post_count: 0 });
+    client.listMessages.mockResolvedValueOnce({ posts: [{ message: 'no id or time' }] });
+    const p4 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'fourth' });
+    expect((p4.preview as unknown as Record<string, any>).messages_thread).toEqual({ post_count: 1 });
+    client.listMessages.mockRejectedValueOnce('plain string');
+    const p5 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'fifth' });
+    expect((p5.preview as unknown as Record<string, any>).messages_thread).toEqual({
+      unavailable: 'could not read the messages thread: plain string',
+    });
+    await h.close();
+  });
+
+  it('still previews when the thread cannot be read, and says so', async () => {
+    const client = fakeClient();
+    client.listMessages.mockRejectedValue(new Error('boom'));
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    expect((p1.preview as unknown as Record<string, any>).messages_thread).toEqual({
+      unavailable: 'could not read the messages thread: boom',
+    });
+    await confirmed(h, 'evite_broadcast', { ...args, message: 'again' });
+    expect(client.broadcast).toHaveBeenCalledTimes(1);
     await h.close();
   });
 });

@@ -70,7 +70,7 @@
     "evite_upload_dir": {
       "type": "string",
       "title": "Photo Upload Directory",
-      "description": "Optional. Restrict evite_upload_photo to image files inside this directory (several may be separated by the path delimiter, `:` on macOS/Linux; `~` allowed). A path outside it is refused before anything is read. Unset = any readable image file.",
+      "description": "Optional. The directory evite_upload_photo may read image files from (several may be separated by the path delimiter, `:` on macOS/Linux; `~` allowed). A path outside it, or a hidden file, is refused before anything is read. Unset = ~/Downloads/evite-mcp.",
       "required": false
     },
     "evite_disable_fetchproxy": {

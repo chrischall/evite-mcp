@@ -1,5 +1,4 @@
-import { homedir } from 'node:os';
-import { basename, resolve } from 'node:path';
+import { basename } from 'node:path';
 import {
   buildQueryString,
   CookieJar,
@@ -17,7 +16,6 @@ import {
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import { resolveSession, type ResolvedSession, type ResolveSessionOptions } from './auth.js';
 import { InvalidCredentialsError } from './auth-login.js';
-import { config } from './config.js';
 import {
   IMAGE_MIMETYPES,
   imageDimensions,
@@ -26,6 +24,13 @@ import {
   sniffImageMime,
 } from './image-meta.js';
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
+import { eviteFetch } from './http.js';
+import { confineUploadPath, uploadRoots } from './upload-path.js';
+
+export { resolveUploadPath, confineUploadPath } from './upload-path.js';
+
+/** Deadline for the GCS image upload, which carries the file bytes. */
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 /** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
 const MAX_UPLOAD_BYTES = 20_000_000;
@@ -38,15 +43,6 @@ const MAX_UPLOAD_BYTES = 20_000_000;
  * and is still a small fraction of the 20 MB upload cap.
  */
 const IMAGE_HEAD_BYTES = 1024 * 1024;
-
-/**
- * Resolve an upload path to an absolute one: expand a leading `~` to the home
- * directory (the only shell expansion we do), then resolve against the cwd.
- * Shared with the upload tool's preview so it shows exactly what would be read.
- */
-export function resolveUploadPath(p: string): string {
-  return resolve(p === '~' || p.startsWith('~/') ? homedir() + p.slice(1) : p);
-}
 
 /** The session-resolver signature the client depends on (injectable in tests). */
 export type SessionResolver = (opts?: ResolveSessionOptions) => Promise<ResolvedSession>;
@@ -535,7 +531,7 @@ export class EviteClient {
     /* v8 ignore next -- a 403 always follows a resolved session; defensive */
     if (!session) return 'expired';
     try {
-      const probe = await fetch(`${BASE_URL}${SESSION_PROBE_PATH}`, {
+      const probe = await eviteFetch(`${BASE_URL}${SESSION_PROBE_PATH}`, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'application/json' },
       });
@@ -601,7 +597,7 @@ export class EviteClient {
     const url = `${BASE_URL}${path}${qs}`;
 
     const response = await this.sessions.withSession((session) =>
-      fetch(url, {
+      eviteFetch(url, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'application/json' },
       }),
@@ -641,7 +637,7 @@ export class EviteClient {
   /** Authenticated GET returning the raw response text (for the SSR gallery pages). */
   private async getHtml(path: string): Promise<string> {
     const response = await this.sessions.withSession((session) =>
-      fetch(`${BASE_URL}${path}`, {
+      eviteFetch(`${BASE_URL}${path}`, {
         method: 'GET',
         headers: { cookie: session.cookieHeader, accept: 'text/html' },
       }),
@@ -749,7 +745,9 @@ export class EviteClient {
         'content-type': 'application/json',
       };
       if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
-      return fetch(url, { method, headers, body: payload });
+      // A write that gets no answer may still have landed: eviteFetch reports
+      // it as WriteOutcomeUnknownError, never a retry-me TypeError (#1188).
+      return eviteFetch(url, { method, headers, body: payload }, { write: true });
     };
 
     // ── Two-tier 401/403 recovery, capped at ONE recovery total (never both,
@@ -861,11 +859,16 @@ export class EviteClient {
    */
   private async firebaseIdToken(config: FireConfig, customToken: string): Promise<string> {
     const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(config.apiKey)}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
-    });
+    // A token exchange, not a write: safe to retry, so a plain error on failure.
+    const response = await eviteFetch(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      },
+      { service: 'Firebase sign-in' },
+    );
     // Read the body once and parse defensively: Identity Toolkit answers JSON on
     // both success and error, but a proxy/edge failure can return HTML.
     const raw = await response.text();
@@ -946,15 +949,19 @@ export class EviteClient {
     // Only the dynamic segment we append gets escaped, matching every other
     // dynamic path segment in this file.
     const path = `${auth.refs.messages}/h2g/${encodeURIComponent(recipient.userId)}`;
-    const response = await fetch(`${base}${path}.json?auth=${encodeURIComponent(idToken)}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        createdBy: host.userId,
-        createdAt: { '.sv': 'timestamp' },
-        message: input.message,
-      }),
-    });
+    const response = await eviteFetch(
+      `${base}${path}.json?auth=${encodeURIComponent(idToken)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          createdBy: host.userId,
+          createdAt: { '.sv': 'timestamp' },
+          message: input.message,
+        }),
+      },
+      { write: true, service: 'Evite chat' },
+    );
     // Single body read: RTDB returns `{"name":"<pushId>"}` on success and a JSON
     // (or occasionally plain-text) error otherwise.
     const raw = await response.text();
@@ -1018,7 +1025,8 @@ export class EviteClient {
    * mimetype declared in step 1 must match the Blob's type in step 2.
    */
   async uploadPhoto(eventId: string, input: UploadPhotoInput): Promise<UploadPhotoResult> {
-    const abs = resolveUploadPath(input.path);
+    // Confined to the upload directory before anything else (fleet-audit #1243).
+    const abs = confineUploadPath(input.path);
     // SECURITY (fleet-audit #102): the path comes from the model, and guest-authored
     // content (messages, RSVP notes) reaches the model verbatim — a prompt-injection
     // channel. So the only thing trusted is the file's own bytes: whatever the
@@ -1037,17 +1045,20 @@ export class EviteClient {
     // message rather than a raw Node error. The type sniff and the dimensions
     // need only the header, so readFileHead pulls just IMAGE_HEAD_BYTES off disk.
     // Nothing leaves the machine until every check below has passed.
-    // When EVITE_UPLOAD_DIR is set, both reads are confined to it: a path that
-    // resolves (symlinks included) outside those directories is refused before
-    // a single byte is read, let alone uploaded.
-    const roots = config.uploadRoots();
+    // Both reads are confined to the upload directories again at open time: a
+    // path that resolves (symlinks included) outside them is refused before a
+    // single byte is read, let alone uploaded.
+    const roots = uploadRoots();
     let head: Buffer;
     let blob: Blob;
     try {
-      head = await readFileHead(abs, IMAGE_HEAD_BYTES, { ...(roots ? { allowedRoots: roots } : {}) });
-      blob = await fileBlob(abs, { ...(roots ? { allowedRoots: roots } : {}) });
+      head = await readFileHead(abs, IMAGE_HEAD_BYTES, { allowedRoots: roots });
+      blob = await fileBlob(abs, { allowedRoots: roots });
     } catch (e) {
-      if (roots && /outside the allowed directories/.test(String(e))) {
+      // confineUploadPath already refused an outside path; this catches a file
+      // swapped for an outbound symlink between that check and the open.
+      /* v8 ignore next 5 -- a check-to-open race; the shared read helper refuses it */
+      if (/outside the allowed directories/.test(String(e))) {
         throw new McpToolError(`Refusing to upload "${input.path}": it is outside the allowed upload directories.`, {
           hint: 'EVITE_UPLOAD_DIR restricts which directories photos can be uploaded from — move the photo into one of them, or change EVITE_UPLOAD_DIR.',
         });
@@ -1106,7 +1117,13 @@ export class EviteClient {
     const filename = basename(abs) || 'photo';
     form.append('file', blob, filename);
 
-    const gcs = await fetch(ticket.upload_url, { method: 'POST', body: form, redirect: 'manual' });
+    // Not the commit (Step 4 registers the photo), so a plain error on failure;
+    // a longer deadline because this carries the image bytes.
+    const gcs = await eviteFetch(
+      ticket.upload_url,
+      { method: 'POST', body: form, redirect: 'manual' },
+      { service: 'Google Cloud Storage', timeoutMs: UPLOAD_TIMEOUT_MS },
+    );
     // Success is a 303 redirect (to success_action_redirect); accept 2xx too.
     if (gcs.status !== 303 && !gcs.ok) {
       const text = await gcs.text().catch(() => '');
@@ -1391,7 +1408,8 @@ export class EviteClient {
         accept: 'text/html',
       };
       if (session.csrfToken) headers[CSRF_HEADER] = session.csrfToken;
-      return fetch(url, { method: 'GET', headers, redirect: 'manual' });
+      // A GET that CREATES a draft: a dropped connection leaves its outcome unknown.
+      return eviteFetch(url, { method: 'GET', headers, redirect: 'manual' }, { write: true });
     });
     if (isLoginRedirect(response)) {
       throw new SessionNotAuthenticatedError('Evite', 'https://www.evite.com');

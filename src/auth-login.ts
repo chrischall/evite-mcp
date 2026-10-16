@@ -31,10 +31,12 @@ import {
   CookieJar,
   detectEdgeBlock,
   EdgeBlockedError,
+  McpToolError,
   RateLimitError,
   SessionNotAuthenticatedError,
   UnreachableError,
 } from '@chrischall/mcp-utils';
+import { eviteFetch } from './http.js';
 
 /** Evite origin + endpoints. */
 const ORIGIN = 'https://www.evite.com';
@@ -90,6 +92,11 @@ export class InvalidCredentialsError extends SessionNotAuthenticatedError {
  * Throw a "go authenticate" error pointing the user at the credential env vars.
  * The password is never interpolated.
  */
+/** eviteFetch's deadline expiring — Evite did not answer, the credentials were not judged. */
+function isTimeout(err: unknown): boolean {
+  return err instanceof McpToolError && err.kind === 'timeout';
+}
+
 function badCredentials(): never {
   const err = new SessionNotAuthenticatedError('Evite', ORIGIN);
   (err as { hint?: string }).hint = BAD_CREDENTIALS_HINT;
@@ -152,14 +159,17 @@ export async function loginWithPassword(
   // The WHOLE priming jar is echoed back on the POST (the CSRF check requires it).
   const primed = new CookieJar();
   try {
-    const prime = await fetchImpl(HOME_URL, {
-      method: 'GET',
-      headers: { 'User-Agent': USER_AGENT },
-    });
+    // Bounded, but not tied to one MCP call: the login is single-flight, and
+    // one caller cancelling must not fail the others queued on it.
+    const prime = await eviteFetch(
+      HOME_URL,
+      { method: 'GET', headers: { 'User-Agent': USER_AGENT } },
+      { fetchImpl, cancellable: false },
+    );
     await throwIfEdgeBlocked(prime, 'GET', '/');
     primed.absorb(prime.headers);
   } catch (err) {
-    if (err instanceof EdgeBlockedError) throw err;
+    if (err instanceof EdgeBlockedError || isTimeout(err)) throw err;
     badCredentials();
   }
   const csrf = primed.get(CSRF_COOKIE);
@@ -168,19 +178,25 @@ export async function loginWithPassword(
   // ── 2. Login: POST creds with the full jar, the CSRF header, and Origin.
   let response: Response;
   try {
-    response = await fetchImpl(LOGIN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': csrf,
-        Cookie: primed.header(),
-        Origin: ORIGIN,
-        Referer: HOME_URL,
-        'User-Agent': USER_AGENT,
+    response = await eviteFetch(
+      LOGIN_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrf,
+          Cookie: primed.header(),
+          Origin: ORIGIN,
+          Referer: HOME_URL,
+          'User-Agent': USER_AGENT,
+        },
+        body: JSON.stringify({ email, password }),
       },
-      body: JSON.stringify({ email, password }),
-    });
-  } catch {
+      { fetchImpl, cancellable: false },
+    );
+  } catch (err) {
+    // A timeout says nothing about the password; do not send the user after it.
+    if (isTimeout(err)) throw err;
     badCredentials();
   }
 

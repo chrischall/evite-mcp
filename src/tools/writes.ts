@@ -8,7 +8,7 @@ import {
   toolAnnotations,
 } from '@chrischall/mcp-utils';
 import { statSync } from 'node:fs';
-import { resolveUploadPath, type EviteClient } from '../client.js';
+import { confineUploadPath, type EviteClient } from '../client.js';
 import { IMAGE_MIMETYPES } from '../image-meta.js';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -35,6 +35,36 @@ import { IMAGE_MIMETYPES } from '../image-meta.js';
 // than an evite.com endpoint — `evite_send_message` now performs that push over
 // RTDB's REST API (see EviteClient.sendMessage).
 // ────────────────────────────────────────────────────────────────────────────
+
+/** The event's messages thread as `evite_broadcast` binds it: count + latest post. */
+type ThreadState =
+  | { post_count: number; latest_post_id?: string; latest_post_at?: string }
+  | { unavailable: string };
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined);
+
+/**
+ * Read the thread for {@link ThreadState}. The post shape is best-effort (see
+ * docs/EVITE-API.md), so both id/created spellings are accepted. A failed read
+ * does not block the broadcast — the preview says the thread could not be read.
+ */
+async function readThread(client: EviteClient, eventId: string): Promise<ThreadState> {
+  try {
+    const { posts } = await client.listMessages(eventId);
+    const list = Array.isArray(posts) ? (posts as Array<Record<string, unknown>>) : [];
+    const last = list[list.length - 1];
+    if (!last) return { post_count: 0 };
+    const id = str(last.id) ?? str(last.postId);
+    const at = str(last.created) ?? str(last.createdAt);
+    return {
+      post_count: list.length,
+      ...(id ? { latest_post_id: id } : {}),
+      ...(at ? { latest_post_at: at } : {}),
+    };
+  } catch (err) {
+    return { unavailable: `could not read the messages thread: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
 
 const rsvpArgs = z.object({
   event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
@@ -78,7 +108,11 @@ const uploadPhotoArgs = z.object({
   path: z
     .string()
     .min(1)
-    .describe('Path to the local image file to upload (a leading ~ is expanded). JPEG/PNG/GIF/WebP/HEIC, max 20 MB.'),
+    .describe(
+      'Path to the local image file to upload, inside the upload directory (EVITE_UPLOAD_DIR, default ' +
+        '~/Downloads/evite-mcp; a relative path is resolved there, a leading ~ is expanded; hidden files are ' +
+        'refused). JPEG/PNG/GIF/WebP/HEIC, max 20 MB.',
+    ),
   mimetype: z
     .enum(IMAGE_MIMETYPES)
     .optional()
@@ -222,7 +256,9 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Broadcast a message to whole RSVP segments of an Evite event at once (e.g. everyone ' +
-        `who replied yes/maybe). This really emails every guest in those segments. ${CONFIRM_FLOW_SENTENCE}`,
+        'who replied yes/maybe). This really emails every guest in those segments. If a call fails or ' +
+        'times out it may still have gone out — check evite_list_messages before calling again. ' +
+        `${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Broadcast to Evite RSVP segments', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: broadcastArgs,
     },
@@ -232,12 +268,25 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
         groups: args.groups,
         participantCount: args.participant_count,
       };
+      // A broadcast has no natural idempotence: a retry after a failed-looking
+      // first attempt re-emails every guest. Read the thread first, show its
+      // latest post, and bind that state as the token's revision, so the
+      // preview reflects whether something just went out and a post landing
+      // between preview and confirm is refused as DRAFT_CHANGED (#1188).
+      const thread = await readThread(client, args.event_id);
       const gate = await confirmWrite(ctx, {
         tool: 'evite_broadcast',
         account: undefined,
         action: 'evite.broadcast',
         message: 'Review and confirm this broadcast (it emails every guest in these segments):',
         target: args.event_id,
+        revision: JSON.stringify(thread),
+        preview: {
+          messages_thread: thread,
+          caveat:
+            'This emails every guest in these segments. If an earlier attempt failed or timed out, check ' +
+            'evite_list_messages (and the latest post above) first — it may already have gone out.',
+        },
         payload: { eventId: args.event_id, ...body },
         willSend: {
           event_id: args.event_id,
@@ -268,7 +317,10 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
       // and modification time are read on every call and bound into the
       // token, so a file swapped or edited between the preview and the upload
       // (even for one of the same size) is refused as DRAFT_CHANGED.
-      const resolved = resolveUploadPath(args.path);
+      // Confinement first (fleet-audit #1243): a path outside the upload
+      // directory, or a hidden one, is refused here — before the stat, so the
+      // refusal says nothing about whether the file exists or how big it is.
+      const resolved = confineUploadPath(args.path);
       let size: number | undefined;
       let mtimeMs: number | undefined;
       try {
@@ -476,7 +528,8 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       description:
         'Send the invitation to the ready-to-send (draft) guests of an event ("Send now"). ' +
-        `THIS EMAILS GUESTS. ${CONFIRM_FLOW_SENTENCE}`,
+        'THIS EMAILS GUESTS. If a call fails or times out it may still have sent — check evite_list_guests ' +
+        `(delivery status) before calling again. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Send an Evite invitation', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: eventIdArgs,
     },

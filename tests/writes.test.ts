@@ -21,6 +21,12 @@ function fakeClient() {
     rsvp: vi.fn(async () => ({ ok: true })),
     sendMessage: vi.fn(async () => ({ ok: true })),
     broadcast: vi.fn(async () => ({ ok: true })),
+    listMessages: vi.fn(async () => ({
+      posts: [
+        { id: 'POST1', message: 'older', created: '2026-05-19T10:00:00.000Z' },
+        { id: 'POST2', message: 'newest', created: '2026-05-20T12:00:00.000Z' },
+      ],
+    })),
     createEvent: vi.fn(async () => ({ event: { id: 'NEW' } })),
     updateEvent: vi.fn(async () => ({ event: { id: 'EVENTID0' } })),
     addGuest: vi.fn(async () => ({ ok: true })),
@@ -54,6 +60,7 @@ function fakeClient() {
     reinstateEvent: ReturnType<typeof vi.fn>;
     duplicateEvent: ReturnType<typeof vi.fn>;
     broadcast: ReturnType<typeof vi.fn>;
+    listMessages: ReturnType<typeof vi.fn>;
     uploadPhoto: ReturnType<typeof vi.fn>;
   };
 }
@@ -280,7 +287,121 @@ describe('evite_broadcast', () => {
   });
 });
 
+describe('evite_broadcast — bound to the event thread as read (fleet-audit #1188)', () => {
+  const args = { event_id: 'EVENTID0', message: 'See you Saturday!', groups: ['yes'] };
+
+  it('phase 1 reads the messages thread and shows its latest post', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    expect(client.listMessages).toHaveBeenCalledWith('EVENTID0');
+    const preview = p1.preview as unknown as Record<string, any>;
+    expect(preview.messages_thread).toEqual({
+      post_count: 2,
+      latest_post_id: 'POST2',
+      latest_post_at: '2026-05-20T12:00:00.000Z',
+    });
+    expect(preview.caveat).toMatch(/evite_list_messages/);
+    await h.close();
+  });
+
+  it('a post landing between preview and confirm is refused as DRAFT_CHANGED and broadcasts nothing', async () => {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    client.listMessages.mockResolvedValueOnce({
+      posts: [
+        { id: 'POST1', created: '2026-05-19T10:00:00.000Z' },
+        { id: 'POST2', created: '2026-05-20T12:00:00.000Z' },
+        { id: 'POST3', created: '2026-05-21T08:00:00.000Z' },
+      ],
+    });
+    const res = await h.callTool('evite_broadcast', { ...args, confirmToken: p1.confirmToken });
+    expect(JSON.stringify(parseToolResult(res))).toMatch(/DRAFT_CHANGED/);
+    expect(client.broadcast).not.toHaveBeenCalled();
+    await h.close();
+  });
+
+  it('accepts the other post field spellings and an empty thread', async () => {
+    const client = fakeClient();
+    client.listMessages.mockResolvedValueOnce({ posts: [{ postId: 'P9', createdAt: 'T9' }] });
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    expect((p1.preview as unknown as Record<string, any>).messages_thread).toEqual({
+      post_count: 1,
+      latest_post_id: 'P9',
+      latest_post_at: 'T9',
+    });
+    client.listMessages.mockResolvedValueOnce({ posts: [] });
+    const p2 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'other' });
+    expect((p2.preview as unknown as Record<string, any>).messages_thread).toEqual({ post_count: 0 });
+    client.listMessages.mockResolvedValueOnce({});
+    const p3 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'third' });
+    expect((p3.preview as unknown as Record<string, any>).messages_thread).toEqual({ post_count: 0 });
+    client.listMessages.mockResolvedValueOnce({ posts: [{ message: 'no id or time' }] });
+    const p4 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'fourth' });
+    expect((p4.preview as unknown as Record<string, any>).messages_thread).toEqual({ post_count: 1 });
+    client.listMessages.mockRejectedValueOnce('plain string');
+    const p5 = await phaseOne(h, 'evite_broadcast', { ...args, message: 'fifth' });
+    expect((p5.preview as unknown as Record<string, any>).messages_thread).toEqual({
+      unavailable: 'could not read the messages thread: plain string',
+    });
+    await h.close();
+  });
+
+  it('still previews when the thread cannot be read, and says so', async () => {
+    const client = fakeClient();
+    client.listMessages.mockRejectedValue(new Error('boom'));
+    const h = await harnessFor(client);
+    const p1 = await phaseOne(h, 'evite_broadcast', args);
+    expect((p1.preview as unknown as Record<string, any>).messages_thread).toEqual({
+      unavailable: 'could not read the messages thread: boom',
+    });
+    await confirmed(h, 'evite_broadcast', { ...args, message: 'again' });
+    expect(client.broadcast).toHaveBeenCalledTimes(1);
+    await h.close();
+  });
+});
+
 describe('evite_upload_photo', () => {
+  // Uploads are confined to EVITE_UPLOAD_DIR (default ~/Downloads/evite-mcp);
+  // these tests put their files under the OS temp dir and confine there.
+  beforeEach(() => {
+    process.env.EVITE_UPLOAD_DIR = tmpdir();
+  });
+
+  it('refuses a path outside the upload directory BEFORE the gate, revealing nothing about it (#1243)', async () => {
+    guardFetch();
+    const dir = mkdtempSync(join(tmpdir(), 'evite-outside-'));
+    const file = join(dir, 'id_ed25519');
+    writeFileSync(file, Buffer.alloc(4321));
+    process.env.EVITE_UPLOAD_DIR = join(dir, 'uploads');
+    try {
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
+      expect(res.isError).toBe(true);
+      const text = JSON.stringify(res);
+      expect(text).toMatch(/outside the allowed upload directories/);
+      expect(text).not.toMatch(/4321|size_bytes|confirmToken/);
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      await h.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a hidden path inside the upload directory before the gate', async () => {
+    guardFetch();
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: '.ssh/id_ed25519' });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res)).toMatch(/hidden/);
+    expect(JSON.stringify(res)).not.toMatch(/size_bytes|confirmToken/);
+    await h.close();
+  });
+
   it('phase 1: previews and makes no call', async () => {
     const fetchSpy = guardFetch();
     const client = fakeClient();
@@ -288,11 +409,12 @@ describe('evite_upload_photo', () => {
     const p1 = await phaseOne(h, 'evite_upload_photo', {
       event_id: 'EVENTID0',
       guest_id: 'GUEST9',
-      path: '~/Pictures/cake.jpg',
+      path: 'cake.jpg',
     });
     expect(client.uploadPhoto).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.willSend.path).toBe('~/Pictures/cake.jpg');
+    expect(p1.preview.willSend.path).toBe('cake.jpg');
+    expect(p1.preview.willSend.resolved_path).toBe(join(tmpdir(), 'cake.jpg'));
     await h.close();
   });
 
@@ -307,12 +429,15 @@ describe('evite_upload_photo', () => {
       expect(p1.preview.willSend.resolved_path).toBe(file);
       expect(p1.preview.willSend.size_bytes).toBe(1234);
       // A ~ path resolves against the home directory; a missing file has no size.
+      delete process.env.EVITE_UPLOAD_DIR; // the default root, ~/Downloads/evite-mcp
       const p2 = await phaseOne(h, 'evite_upload_photo', {
         event_id: 'E',
         guest_id: 'G',
-        path: '~/evite-mcp-no-such-file.png',
+        path: '~/Downloads/evite-mcp/evite-mcp-no-such-file.png',
       });
-      expect(p2.preview.willSend.resolved_path).toBe(join(homedir(), 'evite-mcp-no-such-file.png'));
+      expect(p2.preview.willSend.resolved_path).toBe(
+        join(homedir(), 'Downloads', 'evite-mcp', 'evite-mcp-no-such-file.png'),
+      );
       expect(p2.preview.willSend.size_bytes).toBeUndefined();
       await h.close();
     } finally {
@@ -383,11 +508,11 @@ describe('evite_upload_photo', () => {
     await confirmed(h, 'evite_upload_photo', {
       event_id: 'EVENTID0',
       guest_id: 'GUEST9',
-      path: '~/Pictures/cake.jpg',
+      path: 'cake.jpg',
     });
     expect(client.uploadPhoto).toHaveBeenCalledTimes(1);
     expect(client.uploadPhoto).toHaveBeenCalledWith('EVENTID0', {
-      path: '~/Pictures/cake.jpg',
+      path: 'cake.jpg',
       guestId: 'GUEST9',
       mimetype: undefined,
     });

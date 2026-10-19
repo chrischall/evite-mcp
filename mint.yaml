@@ -4,6 +4,17 @@ slug: evite
 summary: >-
   Evite tools for Claude — list events, view guest lists & RSVPs, RSVP, message
   guests, and create/edit events.
+examples:
+  - prompt: >-
+      How many people have RSVPed yes to my upcoming Evite party, and how many
+      adults and kids are coming?
+    note: Read-only — the RSVP summary with head counts.
+  - prompt: >-
+      Which guests on my next Evite event haven't replied yet?
+    note: Read-only — lists the guest list with each RSVP response.
+  - prompt: >-
+      What Evite events am I invited to as a guest, and when are they?
+    note: Read-only — lists events where you are a guest.
 #
 # Hosting note (deliberately a comment, not part of the user-facing summary):
 # this is a BROWSER-BRIDGE MCP — it reaches evite.com through the user's

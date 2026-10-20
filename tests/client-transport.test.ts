@@ -36,7 +36,7 @@ describe('EviteClient transport', () => {
     queue();
     const err = await newClient().listEvents({}).catch((e) => e);
     expect(err).not.toBeInstanceOf(WriteOutcomeUnknownError);
-    expect(String(err)).toMatch(/fetch failed/);
+    expect(String(err)).toMatch(/Could not reach Evite at www\.evite\.com/);
   });
 
   it('a broadcast whose connection drops is outcome-unknown, not a bare TypeError', async () => {

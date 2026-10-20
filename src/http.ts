@@ -1,4 +1,9 @@
-import { McpToolError, WriteOutcomeUnknownError, withAmbientCancellation } from '@chrischall/mcp-utils';
+import {
+  McpToolError,
+  WriteOutcomeUnknownError,
+  describeTransportFailure,
+  withAmbientCancellation,
+} from '@chrischall/mcp-utils';
 
 /**
  * The one transport every Evite / Firebase / GCS request goes through
@@ -15,7 +20,9 @@ import { McpToolError, WriteOutcomeUnknownError, withAmbientCancellation } from 
  * `CookieSessionManager.isExpired` must see the raw `Response`. So this wraps
  * `fetch` with the same three guarantees instead: mcp-utils' 30 s deadline,
  * the MCP call's cancellation, and {@link WriteOutcomeUnknownError} for a
- * write that got no answer.
+ * write that got no answer. A read that got no answer throws mcp-utils'
+ * `describeTransportFailure` (host + cause code + hint) instead of the bare
+ * `TypeError('fetch failed')`.
  */
 
 /** Per-request deadline — mcp-utils' DEFAULT_REQUEST_TIMEOUT_MS. */
@@ -77,6 +84,10 @@ export async function eviteFetch(
         hint: 'Evite did not answer in time; this was a read, so it is safe to retry.',
       });
     }
-    throw cause;
+    // A read that never got a response: undici's bare `TypeError('fetch
+    // failed')` names neither the host nor the reason. Say both, with a hint
+    // keyed to the cause (DNS, TLS, refused, an egress proxy's refusal). Still
+    // a plain error — a read is safe to retry.
+    throw describeTransportFailure(cause, url, service) ?? cause;
   }
 }

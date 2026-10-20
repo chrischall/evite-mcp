@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.7](https://github.com/chrischall/evite-mcp/compare/v1.3.6...v1.3.7) (2026-10-20)
+
+
+### Bug Fixes
+
+* **http:** say which host Evite could not reach and why, not a bare "fetch failed" ([#213](https://github.com/chrischall/evite-mcp/issues/213)) ([2b226bf](https://github.com/chrischall/evite-mcp/commit/2b226bfdc5d8f00068be0dc409f6a47512f765e3))
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#211](https://github.com/chrischall/evite-mcp/issues/211)) ([e4cae02](https://github.com/chrischall/evite-mcp/commit/e4cae027e18598b2bdf14fca804d064ac9f374bd))
+
 ## [1.3.6](https://github.com/chrischall/evite-mcp/compare/v1.3.5...v1.3.6) (2026-10-16)
 
 

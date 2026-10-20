@@ -175,6 +175,24 @@ describe('loginWithPassword — error & parser branches', () => {
     });
     await expect(loginWithPassword('u@e.com', 'pw', fetchImpl)).rejects.toBeInstanceOf(SessionNotAuthenticatedError);
   });
+  it('lets a priming-GET transport failure through as "could not reach", not a credentials error', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
+    });
+    const err = await loginWithPassword('u@e.com', 'pw', fetchImpl).catch((e) => e);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(err.kind).toBe('transport');
+    expect(err.message).toMatch(/^Could not reach Evite at www\.evite\.com/);
+  });
+  it('lets a login-POST transport failure through as "could not reach", not a credentials error', async () => {
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') throw new TypeError('fetch failed');
+      return fakeResponse({ ok: true, status: 200, setCookies: ['csrftoken=prime-csrf; Path=/'] });
+    });
+    const err = await loginWithPassword('u@e.com', 'pw', fetchImpl).catch((e) => e);
+    expect(err).not.toBeInstanceOf(SessionNotAuthenticatedError);
+    expect(err.kind).toBe('transport');
+  });
   it('reads Set-Cookie via the legacy headers.get fallback', async () => {
     const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
       if (init?.method === 'POST') return { ok: true, status: 200, headers: { getSetCookie: () => ['x-evite-session=s; Path=/', 'evtsession=e; Path=/'] }, json: async () => ({}) } as unknown as Response;

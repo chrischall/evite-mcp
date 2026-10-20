@@ -88,9 +88,12 @@ export class InvalidCredentialsError extends SessionNotAuthenticatedError {
   }
 }
 
-/** eviteFetch's deadline expiring — Evite did not answer, the credentials were not judged. */
-function isTimeout(err: unknown): boolean {
-  return err instanceof McpToolError && err.kind === 'timeout';
+/**
+ * eviteFetch's deadline expiring, or a transport failure (the request never
+ * got a response) — Evite did not answer, so the credentials were not judged.
+ */
+function isNoAnswer(err: unknown): boolean {
+  return err instanceof McpToolError && (err.kind === 'timeout' || err.kind === 'transport');
 }
 
 /**
@@ -169,7 +172,7 @@ export async function loginWithPassword(
     await throwIfEdgeBlocked(prime, 'GET', '/');
     primed.absorb(prime.headers);
   } catch (err) {
-    if (err instanceof EdgeBlockedError || isTimeout(err)) throw err;
+    if (err instanceof EdgeBlockedError || isNoAnswer(err)) throw err;
     badCredentials();
   }
   const csrf = primed.get(CSRF_COOKIE);
@@ -195,8 +198,8 @@ export async function loginWithPassword(
       { fetchImpl, cancellable: false },
     );
   } catch (err) {
-    // A timeout says nothing about the password; do not send the user after it.
-    if (isTimeout(err)) throw err;
+    // No answer (a timeout or transport failure) says nothing about the password; do not send the user after it.
+    if (isNoAnswer(err)) throw err;
     badCredentials();
   }
 

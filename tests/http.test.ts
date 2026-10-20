@@ -32,8 +32,35 @@ describe('eviteFetch (fleet-audit #1188)', () => {
     expect(err.message).toMatch(/Evite request timed out after 20ms/);
   });
 
-  it('a read that drops rethrows the fetch error unchanged (safe to retry)', async () => {
-    const boom = new TypeError('fetch failed');
+  it('a read that drops names the host and the cause, chaining the fetch error (safe to retry)', async () => {
+    const boom = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('getaddrinfo ENOTFOUND www.evite.com'), { code: 'ENOTFOUND' }),
+    });
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(boom);
+    const err = await eviteFetch('https://www.evite.com/x?token=secret', { method: 'GET' }).catch((e) => e);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err).not.toBeInstanceOf(WriteOutcomeUnknownError);
+    expect(err.kind).toBe('transport');
+    expect(err.message).toBe('Could not reach Evite at www.evite.com (ENOTFOUND: getaddrinfo ENOTFOUND www.evite.com).');
+    expect(err.message).not.toContain('secret');
+    expect(err.hint).toMatch(/DNS|VPN/);
+    expect(err.cause).toBe(boom);
+  });
+
+  it('a read whose egress proxy refuses the host points at the allow-list', async () => {
+    const aborted = Object.assign(new Error('Proxy response (403) !== 200 when HTTP Tunneling'), { code: 'UND_ERR_ABORTED' });
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed', { cause: new Error('Request was cancelled.', { cause: aborted }) }),
+    );
+    const err = await eviteFetch('https://storage.googleapis.com/b/o', { method: 'GET' }, { service: 'Evite uploads' }).catch(
+      (e) => e,
+    );
+    expect(err.message).toMatch(/^Could not reach Evite uploads at storage\.googleapis\.com/);
+    expect(err.hint).toMatch(/egress allow-list/);
+  });
+
+  it('a read that fails any other way rethrows the error unchanged', async () => {
+    const boom = new Error('boom');
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(boom);
     await expect(eviteFetch('https://www.evite.com/x', { method: 'GET' })).rejects.toBe(boom);
   });

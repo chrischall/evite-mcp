@@ -225,4 +225,21 @@ describe('briefLine', () => {
     expect(briefLine(null)).toBe('(untitled) — no date — no reply');
     expect(briefLine({ title: '  ', start: '', status: 'upcoming', rsvp: '' })).toBe('(untitled) — no date — upcoming, no reply');
   });
+
+  it('escapes a title that starts with "-- " or "\\" with one leading backslash, so it never reads as a note', () => {
+    expect(briefLine({ title: '-- none', start: '2026-06-01', status: 'upcoming', is_host: true })).toBe(
+      '\\-- none — 2026-06-01 — upcoming, hosting',
+    );
+    expect(briefLine({ title: '\\back', start: '2026-06-01', status: 'upcoming', is_host: true })).toBe(
+      '\\\\back — 2026-06-01 — upcoming, hosting',
+    );
+    expect(briefLine({ title: '--not a note', is_host: true })).toBe('--not a note — no date — hosting');
+  });
+
+  it('cuts the line as a WHOLE to 120 characters, title first, even when the tail alone overflows', () => {
+    const line = briefLine({ title: 'Picnic in the park', start: '2026-06-01', status: 's'.repeat(200), is_host: true });
+    expect(line.length).toBeLessThanOrEqual(120);
+    expect(line.startsWith('Picnic')).toBe(true);
+    expect(line).toContain(' — 2026-06-01 — ');
+  });
 });

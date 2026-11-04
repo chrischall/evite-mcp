@@ -10,6 +10,7 @@ import {
 import { statSync } from 'node:fs';
 import { confineUploadPath, type EviteClient } from '../client.js';
 import { IMAGE_MIMETYPES } from '../image-meta.js';
+import { familyMeta } from './hints.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Confirmed write tools.
@@ -185,6 +186,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_rsvp',
     {
+      _meta: familyMeta('change', { aliases: ['rsvp', 'reply to the invite'] }),
       description: `RSVP for a guest on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'RSVP to an Evite event', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: rsvpArgs,
@@ -222,6 +224,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_send_message',
     {
+      _meta: familyMeta('send', { aliases: ['message a guest'] }),
       description:
         'Send a private message to one Evite event guest. This really notifies the guest. ' +
         'Sent as the event host (Evite delivers per-guest chat over Firebase, not REST), so ' +
@@ -254,6 +257,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_broadcast',
     {
+      _meta: familyMeta('send', { aliases: ['message all guests', 'remind guests'] }),
       description:
         'Broadcast a message to whole RSVP segments of an Evite event at once (e.g. everyone ' +
         'who replied yes/maybe). This really emails every guest in those segments. If a call fails or ' +
@@ -305,6 +309,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_upload_photo',
     {
+      _meta: familyMeta('change', { aliases: ['party photos', 'upload a photo'] }),
       description:
         "Upload a local image to an Evite event's shared photo gallery. This really adds the " +
         `photo to the event album. Needs your guest_id on the event (from evite_list_guests). ${CONFIRM_FLOW_SENTENCE}`,
@@ -356,6 +361,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_create_event',
     {
+      _meta: familyMeta('change', { aliases: ['create an invite', 'new party'] }),
       description:
         'Create an Evite event (as a draft). Requires title, start_datetime, and template_name. ' +
         `${CONFIRM_FLOW_SENTENCE} ` +
@@ -403,6 +409,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_update_event',
     {
+      _meta: familyMeta('change', { aliases: ['edit the party', 'change the invite'] }),
       description: `Edit an existing Evite event (only the fields you pass change). ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Edit an Evite event', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: updateEventArgs,
@@ -438,6 +445,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_add_guest',
     {
+      _meta: familyMeta('change', { aliases: ['invite someone', 'add a guest'] }),
       description:
         "Add guests to an event's draft (un-sent) guest list. Nothing is emailed until you " +
         `evite_send. ${CONFIRM_FLOW_SENTENCE} ` +
@@ -465,6 +473,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_update_guest',
     {
+      _meta: familyMeta('change'),
       description: `Edit a draft (un-sent) guest's name/email/phone on an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({ title: 'Edit an Evite guest', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: updateGuestArgs,
@@ -496,6 +505,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_remove_guest',
     {
+      _meta: familyMeta('change', { aliases: ['uninvite', 'remove a guest'] }),
       description: `Remove a draft (un-sent) guest from an Evite event. ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({
         title: 'Remove an Evite guest',
@@ -526,6 +536,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_send',
     {
+      _meta: familyMeta('send', { aliases: ['send the invites', 'send invitations'] }),
       description:
         'Send the invitation to the ready-to-send (draft) guests of an event ("Send now"). ' +
         'THIS EMAILS GUESTS. If a call fails or times out it may still have sent — check evite_list_guests ' +
@@ -556,6 +567,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_cancel_event',
     {
+      _meta: familyMeta('change', { aliases: ['cancel the party'] }),
       description:
         'Cancel an Evite event (also used to delete a draft). DESTRUCTIVE — may send a ' +
         `cancellation notice to guests; reversible with evite_reinstate_event. ${CONFIRM_FLOW_SENTENCE}`,
@@ -591,6 +603,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_reinstate_event',
     {
+      _meta: familyMeta('change'),
       description:
         `Reinstate a previously-cancelled Evite event (the inverse of evite_cancel_event). ${CONFIRM_FLOW_SENTENCE}`,
       annotations: toolAnnotations({
@@ -622,6 +635,7 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
   server.registerTool(
     'evite_duplicate_event',
     {
+      _meta: familyMeta('change', { aliases: ['copy the invite'] }),
       description:
         'Duplicate an Evite event into a fresh draft (the "Duplicate event" action). Returns the ' +
         `new draft event id. ${CONFIRM_FLOW_SENTENCE}`,

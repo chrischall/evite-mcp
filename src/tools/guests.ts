@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { toolAnnotations } from '@chrischall/mcp-utils';
 import { viewArg, viewResponse } from '../view.js';
 import type { EviteClient } from '../client.js';
+import { familyMeta } from './hints.js';
 
 const eventIdArgs = z.object({
   event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
@@ -16,6 +17,7 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
         'List the guests for an Evite event (GET /services/event/v1/{id}/guests/): name, RSVP response, ' +
         'head counts, delivery status, and more.',
       annotations: toolAnnotations({ title: 'List Evite event guests', openWorld: true }),
+      _meta: familyMeta('lookup', { aliases: ['guest list', 'who is coming', 'guests'] }),
       inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {
@@ -31,6 +33,7 @@ export function registerGuestTools(server: McpServer, client: EviteClient): void
         'Get the RSVP summary for an Evite event (yes/no/maybe/noReply plus adult/kid head counts). ' +
         'Derived from the event guests endpoint.',
       annotations: toolAnnotations({ title: 'Evite RSVP summary', openWorld: true }),
+      _meta: familyMeta('lookup', { aliases: ['rsvps', 'head count', 'who rsvped'] }),
       inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {

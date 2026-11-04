@@ -1,4 +1,13 @@
-import { minifiedResult, resolveView, stripMediaUrls, viewParam, type View } from '@chrischall/mcp-utils';
+import {
+  UNTRUSTED_CONTENT_RULE,
+  minifiedResult,
+  resolveView,
+  stripMediaUrls,
+  untrustedEnvelope,
+  viewParam,
+  type View,
+} from '@chrischall/mcp-utils';
+import { z } from 'zod';
 
 /**
  * The rungs this server honours (`@chrischall/mcp-utils`' `view` vocabulary;
@@ -39,4 +48,30 @@ export const viewArg = (): ReturnType<typeof viewParam> => viewParam(EVITE_VIEWS
 export function viewResponse(view: string | undefined, data: unknown): ReturnType<typeof minifiedResult> {
   const rung: View = resolveView(view, EVITE_VIEWS);
   return minifiedResult(rung === 'compact' ? stripMediaUrls(data) : data);
+}
+
+/**
+ * The `view` parameter of `evite_list_events`, the one context-group canonical
+ * read: the two rungs above plus `brief`. `brief` is not one of mcp-utils'
+ * `View` rungs (it is mcp-host's group-answer shape), so the enum is spelled
+ * here rather than through `viewParam`.
+ */
+export const listEventsViewArg = () =>
+  z
+    .enum([...EVITE_VIEWS, 'brief'])
+    .optional()
+    .describe(
+      `Response shape. ${NOTE} "brief" answers one line per event — title — <ISO start or "no date"> — ` +
+        '<status> — inside the untrusted-data envelope as `data`, with "-- none" for no events and ' +
+        '"-- more" when the page came back full.',
+    );
+
+/**
+ * Answer a `view: "brief"` read: the lines as the untrusted-data envelope's
+ * `data` array — `{ untrusted_content: true, note, data: string[] }`, markers
+ * first, minified — because event titles are written by each event's host. A
+ * line starting with `-- ` is a note (pagination, emptiness), not an item.
+ */
+export function briefResponse(lines: string[], whoWrote: string): ReturnType<typeof minifiedResult> {
+  return minifiedResult(untrustedEnvelope(lines, { note: `${whoWrote} ${UNTRUSTED_CONTENT_RULE}` }));
 }

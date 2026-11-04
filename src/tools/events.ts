@@ -47,9 +47,17 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
 }
 
+/** The shortest a title is cut to before the status gives way too. */
+const TITLE_FLOOR = 24;
+
+const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, Math.max(n - 1, 0))}…` : s);
+
 /**
- * One event as one line, `title — <ISO start | no date> — <status>`, at most
- * 120 characters (the title is shortened). Read only from fields the list
+ * One event as one line, `title — <ISO start | no date> — <status>`, cut to
+ * at most 120 characters as a WHOLE, title first: the title shortens until the
+ * line fits, and only once it is at its floor does the status give way too. A
+ * title starting with `-- ` or `\` is escaped with one leading `\`, so a
+ * host-written title can never read as a note. Read only from fields the list
  * endpoint carries (`title`, `start`, `status`, `is_host`, `rsvp` — see
  * tests/fixtures/events-list.json). The status is Evite's own event status
  * plus your part in it: `hosting`, `rsvp <yes|no|maybe>`, or `no reply`.
@@ -61,10 +69,13 @@ export function briefLine(event: unknown): string {
   const rsvp = str(ev.rsvp);
   const role = ev.is_host === true ? 'hosting' : rsvp ? `rsvp ${rsvp}` : 'no reply';
   const status = str(ev.status);
-  const tail = ` — ${start} — ${status ? `${status}, ${role}` : role}`;
-  const room = BRIEF_MAX - tail.length;
-  const shown = title.length > room ? `${title.slice(0, Math.max(room - 1, 0))}…` : title;
-  return `${shown}${tail}`;
+  const escaped = title.startsWith('-- ') || title.startsWith('\\') ? `\\${title}` : title;
+  const tail = status ? `${status}, ${role}` : role;
+  const sep = ` — ${start} — `;
+  const room = BRIEF_MAX - sep.length;
+  if (escaped.length + tail.length <= room) return `${escaped}${sep}${tail}`;
+  const shown = cut(escaped, Math.max(room - tail.length, Math.min(escaped.length, TITLE_FLOOR)));
+  return `${shown}${sep}${cut(tail, room - shown.length)}`;
 }
 
 export function registerEventTools(server: McpServer, client: EviteClient): void {

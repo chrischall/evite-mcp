@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.0](https://github.com/chrischall/evite-mcp/compare/v1.3.7...v1.4.0) (2026-11-04)
+
+
+### Features
+
+* context-group hints ([#218](https://github.com/chrischall/evite-mcp/issues/218)) ([b2340de](https://github.com/chrischall/evite-mcp/commit/b2340de41a2200e4640ea5b68e3d30ac99cffe31))
+
+
+### Bug Fixes
+
+* **brief:** align the brief view with the fleet contract ([#219](https://github.com/chrischall/evite-mcp/issues/219)) ([068e2b4](https://github.com/chrischall/evite-mcp/commit/068e2b40482d642b991f90438637a69540210464))
+* **deps:** bump the production-dependencies group across 1 directory with 2 updates ([#217](https://github.com/chrischall/evite-mcp/issues/217)) ([23f48e3](https://github.com/chrischall/evite-mcp/commit/23f48e3284372efc928bedcd9438517105dc7fa4))
+* **deps:** bump the production-dependencies group with 2 updates ([#214](https://github.com/chrischall/evite-mcp/issues/214)) ([3da1cbc](https://github.com/chrischall/evite-mcp/commit/3da1cbcc56df70a76ff8e44b7ce008152d30bc14))
+
 ## [1.3.7](https://github.com/chrischall/evite-mcp/compare/v1.3.6...v1.3.7) (2026-10-20)
 
 

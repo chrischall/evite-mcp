@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { toolAnnotations } from '@chrischall/mcp-utils';
 import { viewArg, viewResponse } from '../view.js';
 import type { EviteClient } from '../client.js';
+import { familyMeta } from './hints.js';
 
 const eventIdArgs = z.object({
   event_id: z.string().min(1).describe('Evite event id (event_id from evite_list_events).'),
@@ -15,6 +16,7 @@ export function registerMessageTools(server: McpServer, client: EviteClient): vo
       description:
         "List the messages on an Evite event's Messages tab (GET /services/event/v1/{id}/posts/).",
       annotations: toolAnnotations({ title: 'List Evite event messages', openWorld: true }),
+      _meta: familyMeta('lookup', { aliases: ['party messages', 'event messages'] }),
       inputSchema: z.object({ ...eventIdArgs.shape, view: viewArg() }),
     },
     async (args) => {

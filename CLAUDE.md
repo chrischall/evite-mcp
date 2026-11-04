@@ -50,7 +50,11 @@ src/
     guests.ts       registerGuestTools — list_guests, rsvp_summary.
     messages.ts     registerMessageTools — list_messages.
     writes.ts       registerWriteTools — the 13 confirmed write tools.
+    hints.ts        familyMeta() — the `_meta.mint` context-group hint every
+                    tool but the healthcheck carries (group `family`).
 ```
+
+Context groups: `evite_list_events` is the one canonical read (`whats-on`); its `view: "brief"` answers one line per event inside the untrusted-data envelope (`src/view.ts` `briefResponse`), upcoming only and 25 per page unless the caller says otherwise. `tests/mint-hints.test.ts` holds the intent table every tool must match.
 
 Wiring: `index.ts` passes the `registerXxxTools` functions to `runMcp({ tools: [...] })`; each registers its tools against the shared `EviteClient`.
 

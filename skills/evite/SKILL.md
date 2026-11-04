@@ -52,3 +52,12 @@ The server resolves a session in priority order (see the README for details):
 **Write (asks you to confirm first):** `evite_rsvp`, `evite_send_message`, `evite_broadcast`, `evite_create_event`, `evite_update_event`, `evite_add_guest`, `evite_update_guest`, `evite_remove_guest`, `evite_send`, `evite_cancel_event`, `evite_reinstate_event`, `evite_duplicate_event`.
 
 Every write tool **asks the user to confirm before it sends anything**: a confirmation prompt where the client supports one (unless the server sets `MCP_CONFIRM_ELICITATION=off`); otherwise the first call makes no write (at most a read-only lookup, e.g. `evite_update_guest` reads the draft guest list to build its preview) and returns a preview of exactly what would be sent plus a `confirmToken` (see `MCP_CONFIRM_MODE`). Show the user that preview and get their approval in chat, then call the same tool again with the same arguments plus `confirmToken`. The token is single-use and bound to those exact arguments — change anything and it is refused (`DRAFT_CHANGED`) with a fresh preview and token. The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send`.
+
+## In context groups
+
+On a host that groups MCPs by context (mcp-host's context groups), this server is in the **family** group. Every tool except `evite_healthcheck` carries a `_meta.mint` hint.
+
+- **Canonical read:** `evite_list_events` answers the group's **what's on** question. With `view: "brief"` it returns one line per upcoming event — `title — <ISO start or "no date"> — <status>`, where the status is Evite's event status plus your part in it (`hosting`, `rsvp yes|no|maybe`, `no reply`) — inside the untrusted-data envelope as `data` (event titles are written by each host). A `-- none` line means no events; `-- more` means the page came back full.
+- **No subject and no range:** Evite has no listable subjects (children, properties) and its event list takes no date range, so the canonical read declares neither. Nothing here answers *what's new* or *what's due*; the other reads are `lookup` hints and the writes are `change`/`send` hints.
+- **Compound ask:** "what's on this weekend — any parties, and anything due at school?" — the family group answers the party half from `evite_list_events`, and the school group the rest.
+- **Browser bridge:** when the session comes from the fetchproxy tier (a signed-in evite.com tab) rather than email/password, the group answers "needs your browser open" while that browser is not connected.

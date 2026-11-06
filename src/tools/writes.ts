@@ -7,9 +7,9 @@ import {
   minifiedResult,
   toolAnnotations,
 } from '@chrischall/mcp-utils';
-import { statSync } from 'node:fs';
-import { confineUploadPath, type EviteClient } from '../client.js';
+import type { EviteClient } from '../client.js';
 import { IMAGE_MIMETYPES } from '../image-meta.js';
+import { resolvePhotoSource, UPLOAD_SLOT_TOOL } from '../photo-source.js';
 import { familyMeta } from './hints.js';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -109,16 +109,38 @@ const uploadPhotoArgs = z.object({
   path: z
     .string()
     .min(1)
+    .optional()
     .describe(
-      'Path to the local image file to upload, inside the upload directory (EVITE_UPLOAD_DIR, default ' +
+      'LOCAL INSTALLS ONLY. Path to the image file, inside the upload directory (EVITE_UPLOAD_DIR, default ' +
         '~/Downloads/evite-mcp; a relative path is resolved there, a leading ~ is expanded; hidden files are ' +
-        'refused). JPEG/PNG/GIF/WebP/HEIC, max 20 MB.',
+        `refused). Refused on the hosted connector — use blob_key (via ${UPLOAD_SLOT_TOOL}) or inline there.`,
+    ),
+  inline: z
+    .object({
+      filename: z
+        .string()
+        .min(1)
+        .describe('Filename to store the photo under — a bare name with an image extension, e.g. "photo.jpg".'),
+      content_base64: z
+        .string()
+        .min(1)
+        .describe('The image bytes, standard base64 (a "data:image/…;base64," prefix and line breaks are tolerated).'),
+    })
+    .optional()
+    .describe('The image itself, base64-encoded. Works everywhere; best for a small photo.'),
+  blob_key: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      `The blobKey of an upload slot from ${UPLOAD_SLOT_TOOL}, after the file was PUT to its uploadUrl. ` +
+        'The hosted way to send a photo of any size. Deleted once Evite accepts the photo; kept if the upload fails, so a retry can reuse it.',
     ),
   mimetype: z
     .enum(IMAGE_MIMETYPES)
     .optional()
     .describe(
-      'Override the image mimetype (otherwise inferred from the file). Must match the file contents.',
+      'Override the image mimetype (otherwise inferred from the filename). Must match the file contents.',
     ),
   confirmToken: confirmTokenParam,
 });
@@ -311,50 +333,54 @@ export function registerWriteTools(server: McpServer, client: EviteClient): void
     {
       _meta: familyMeta('change', { aliases: ['party photos', 'upload a photo'] }),
       description:
-        "Upload a local image to an Evite event's shared photo gallery. This really adds the " +
-        `photo to the event album. Needs your guest_id on the event (from evite_list_guests). ${CONFIRM_FLOW_SENTENCE}`,
+        "Upload a photo to an Evite event's shared photo gallery. This really adds the photo to the event " +
+        'album. Needs your guest_id on the event (from evite_list_guests). Pass the image as exactly one of: ' +
+        `path (a file in EVITE_UPLOAD_DIR — local installs only), inline (base64 — small files), or blob_key. ` +
+        `On the hosted connector, use the slot flow: call ${UPLOAD_SLOT_TOOL}, PUT the file to the uploadUrl ` +
+        'with its curl command, then pass the returned blobKey here as blob_key. JPEG/PNG/GIF/WebP/HEIC, max 20 MB. ' +
+        CONFIRM_FLOW_SENTENCE,
       annotations: toolAnnotations({ title: 'Upload a photo to an Evite event album', readOnly: false, destructive: true, openWorld: true }),
       inputSchema: uploadPhotoArgs,
     },
     async (args, ctx) => {
-      // Show exactly which file would be read, so the decision is made on the
-      // resolved absolute path and size rather than a relative/~ string. Size
-      // and modification time are read on every call and bound into the
-      // token, so a file swapped or edited between the preview and the upload
-      // (even for one of the same size) is refused as DRAFT_CHANGED.
-      // Confinement first (fleet-audit #1243): a path outside the upload
-      // directory, or a hidden one, is refused here — before the stat, so the
-      // refusal says nothing about whether the file exists or how big it is.
-      const resolved = confineUploadPath(args.path);
-      let size: number | undefined;
-      let mtimeMs: number | undefined;
-      try {
-        ({ size, mtimeMs } = statSync(resolved));
-      } catch {
-        size = undefined;
-        mtimeMs = undefined;
-      }
-      const upload = { path: args.path, guestId: args.guest_id, mimetype: args.mimetype };
+      // Resolve the file on EVERY call — preview and confirm — and bind its
+      // sha256 into the token, so a file (or blob) edited or swapped between the
+      // preview and the upload is refused as DRAFT_CHANGED. A local path is
+      // confined to EVITE_UPLOAD_DIR first (fleet-audit #1243): an outside or
+      // hidden path is refused before anything about the file is looked at.
+      const { source, resolvedPath } = await resolvePhotoSource(args);
+      const mimetype = args.mimetype ?? source.mimeType;
+      const file = {
+        source: source.origin,
+        ...(args.path !== undefined ? { path: args.path, resolved_path: resolvedPath } : {}),
+        ...(source.blobKey !== undefined ? { blob_key: source.blobKey } : {}),
+        file_name: source.fileName,
+        mimetype,
+        size_bytes: source.sizeBytes,
+        sha256: source.sha256,
+      };
       const gate = await confirmWrite(ctx, {
         tool: 'evite_upload_photo',
         account: undefined,
         action: 'evite.upload_photo',
         message: 'Review and confirm this photo upload:',
         target: args.event_id,
-        payload: { eventId: args.event_id, ...upload, resolvedPath: resolved, sizeBytes: size, mtimeMs },
-        willSend: {
-          event_id: args.event_id,
-          guest_id: args.guest_id,
-          path: args.path,
-          resolved_path: resolved,
-          size_bytes: size,
-          mimetype: args.mimetype,
-        },
+        payload: { eventId: args.event_id, guestId: args.guest_id, ...file },
+        willSend: { event_id: args.event_id, guest_id: args.guest_id, ...file },
         confirmToken: args.confirmToken,
       });
       if (gate) return gate;
-      const data = await client.uploadPhoto(args.event_id, upload);
-      return minifiedResult(data);
+      // A failure here propagates with the blob untouched: the caller can retry
+      // with the same blob_key. Only an accepted photo releases it.
+      const data = await client.uploadPhoto(args.event_id, {
+        bytes: source.bytes,
+        fileName: source.fileName,
+        guestId: args.guest_id,
+        mimetype,
+      });
+      if (source.origin !== 'blob') return minifiedResult(data);
+      const released = await source.release();
+      return minifiedResult({ ...data, blob: { blob_key: source.blobKey, ...released } });
     },
   );
 

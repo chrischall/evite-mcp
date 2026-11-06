@@ -10,7 +10,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for [Evite](h
 
 ## Tools
 
-Six read tools (all read-only), thirteen confirmed write tools, plus `evite_healthcheck`:
+Six read tools (all read-only), thirteen confirmed write tools, `evite_upload_slots` (read-only: upload links for photos on the hosted connector), plus `evite_healthcheck`:
 
 | Tool | Endpoint | Returns |
 | --- | --- | --- |
@@ -30,7 +30,7 @@ Every write tool **asks you to confirm before it sends anything**. A client that
 | `evite_rsvp` | `PUT /services/event/v1/{id}/guests/{guestId}` | RSVP for a guest (response + adult/kid head counts + optional note) |
 | `evite_send_message` | `POST /tsunami/v1/services/event/{id}/guest/{gid}/messages` | send a private message to one guest (body assumed) |
 | `evite_broadcast` | `POST /tsunami/v1/services/event/{id}/broadcast/` | broadcast a message to whole RSVP segments (`virtual_groups`) at once |
-| `evite_upload_photo` | `POST …/photos/v1/{id}/upload/request/` → GCS → finish → shared-gallery | upload a local image to the event's shared photo album (4-step GCS signed upload) |
+| `evite_upload_photo` | `POST …/photos/v1/{id}/upload/request/` → GCS → finish → shared-gallery | upload a photo to the event's shared photo album (4-step GCS signed upload) — from a local `path`, `inline` base64, or an upload-slot `blob_key` (see [Photo uploads](#photo-uploads)) |
 | `evite_create_event` | `POST /services/event/v1/` (`{event:{…}}`) | create an event draft (needs `template_name`; the API 500s even on success) |
 | `evite_update_event` | `PATCH /services/event/v1/{id}` (`{event:{…}}`) | edit an event (only the fields you pass change) |
 | `evite_add_guest` | `POST /ajax/event/{id}/guestlist/draft/` | add guests to the draft (un-sent) list — `[{name,email}]` |
@@ -53,6 +53,12 @@ The authoring flow is `evite_create_event` → `evite_add_guest` → `evite_send
 | `MCP_CONFIRM_SECRET` | random per process | Signing key; set it only if tokens must survive a server restart. |
 
 ## Photo uploads
+
+`evite_upload_photo` takes the image as **exactly one of** three inputs (JPEG/PNG/GIF/WebP/HEIC, max 20 MB; the bytes must really be that image type, whatever the name says):
+
+- **`path`** — local installs only. A file inside `EVITE_UPLOAD_DIR` (below).
+- **`inline`** — `{ filename, content_base64 }`. Works anywhere; meant for a small photo, since every byte rides inside the tool call.
+- **`blob_key`** — the hosted connector's way in. It cannot read files on your machine, so a `path` is refused there with directions. Instead, call `evite_upload_slots` with the filenames; each slot has a signed `uploadUrl` and a ready `curl` command that PUTs the file with the exact `Content-Type`. Then pass the slot's `blobKey` as `blob_key`. The upload is read on the preview and again on confirm, and its SHA-256 is bound into the confirmation, so a file replaced in between is refused (`DRAFT_CHANGED`). It is deleted only after Evite accepts the photo (the result's `blob` says whether that delete worked). If the upload fails it is kept, so a retry can reuse the same `blob_key`. `evite_upload_slots` refuses on a local install, which has no blob store.
 
 | variable | default | |
 |---|---|---|

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCP server for **Evite** event management — talks to evite.com's internal `/services/` (and `/ajax/`, `/tsunami/`) API using the session cookies a signed-in browser holds (Evite has no public API). Cookie-session archetype.
 
-**6 read tools + 13 confirmed write tools** (plus `evite_healthcheck`). Writes ask the user to confirm first — an elicitation prompt where the client supports one (and `MCP_CONFIRM_ELICITATION` isn't `off`), otherwise a preview + single-use `confirmToken` (`MCP_CONFIRM_MODE`) — and mutate only once confirmed.
+**6 read tools + 13 confirmed write tools** (plus `evite_upload_slots`, read-only, and `evite_healthcheck`). Writes ask the user to confirm first — an elicitation prompt where the client supports one (and `MCP_CONFIRM_ELICITATION` isn't `off`), otherwise a preview + single-use `confirmToken` (`MCP_CONFIRM_MODE`) — and mutate only once confirmed.
 
 Three auth tiers, in priority order:
 
@@ -27,7 +27,7 @@ Three auth tiers, in priority order:
 
 **Session lifecycle** is delegated to `@chrischall/mcp-utils/session`'s **`CookieSessionManager`** (`src/client.ts`): single-flight login, clear-on-settle, and exactly-one re-login-and-replay on a genuine expiry. The resolver is the manager's `login`; `isExpired` flags a 401, and a 403 only when it is a dead session — *except* a response already CSRF-recovered locally (see Quirks). `isPermanentError` caches a rejected email/password (`InvalidCredentialsError`, a `/ajax_login` 401) so a known-bad password is never re-POSTed; a login 429/5xx is a `RateLimitError`/`UnreachableError`, not "check your credentials".
 
-Env vars (also mirrored in `src/config.ts`): `EVITE_EMAIL`, `EVITE_PASSWORD`, `EVITE_SESSION_COOKIE`, `EVITE_DISABLE_FETCHPROXY`, plus `EVITE_UPLOAD_DIR` (the `evite_upload_photo` directory allow-list, default `~/Downloads/evite-mcp` — never unconfined; `src/upload-path.ts` `confineUploadPath` refuses outside/hidden paths before the preview's stat, and the roots are passed again as `allowedRoots` to `readFileHead`/`fileBlob`). Every request goes through `src/http.ts` `eviteFetch` (30 s deadline, MCP cancellation except for the single-flight login, `WriteOutcomeUnknownError` for a write with no answer).
+Env vars (also mirrored in `src/config.ts`): `EVITE_EMAIL`, `EVITE_PASSWORD`, `EVITE_SESSION_COOKIE`, `EVITE_DISABLE_FETCHPROXY`, plus `EVITE_UPLOAD_DIR` (the `evite_upload_photo` `path` allow-list, default `~/Downloads/evite-mcp` — never unconfined; `src/upload-path.ts` `confineUploadPath` refuses outside/hidden paths before anything is read, and the same roots are passed again as `allowedRoots` to the shared upload guard). Every request goes through `src/http.ts` `eviteFetch` (30 s deadline, MCP cancellation except for the single-flight login, `WriteOutcomeUnknownError` for a write with no answer).
 
 ## Architecture
 
@@ -43,13 +43,18 @@ src/
                     /tsunami/). get()/getHtml() reads, write() mutations w/ the
                     two-tier CSRF recovery, plus uploadPhoto's 4-step GCS flow.
   image-meta.ts     mimetypeForPath() + imageDimensions() + sniffImageMime()
-                    (magic-byte check: upload_photo only ships real images).
+                    (magic-byte check: upload_photo only ships real images),
+                    IMAGE_EXT_MIME (the path allowlist), MAX_UPLOAD_BYTES.
+  photo-source.ts   resolvePhotoSource() — upload_photo's path | inline |
+                    blob_key, through mcp-utils' resolveUploadSource.
+  upload-path.ts    confineUploadPath() — the EVITE_UPLOAD_DIR check.
   tools/
     healthcheck.ts  registerHealthcheckTools — evite_healthcheck.
     events.ts       registerEventTools — list_events, get_event, list_templates.
     guests.ts       registerGuestTools — list_guests, rsvp_summary.
     messages.ts     registerMessageTools — list_messages.
     writes.ts       registerWriteTools — the 13 confirmed write tools.
+    uploads.ts      registerUploadTools — evite_upload_slots (read-only).
     hints.ts        familyMeta() — the `_meta.mint` context-group hint every
                     tool but the healthcheck carries (group `family`).
 ```
@@ -89,12 +94,14 @@ Write tools (all in `writes.ts`, all gated on the user's confirmation — see th
 | `evite_reinstate_event` | `POST /services/event/v1/{id}/actions/reinstate/` |
 | `evite_duplicate_event` | `GET /plus/create/{id}/copy/` → 302 to new draft editor |
 
+`evite_upload_slots` (`uploads.ts`) mints signed PUT URLs on mcp-host's blob store; it touches neither Evite nor the network.
+
 All endpoints are live-verified (probe 2026-06-01/02) — see `docs/EVITE-API.md`.
 
 ## Conventions
 
 - **TDD.** Write the failing test first; tests mock the session resolver / `@fetchproxy/bootstrap` at the module boundary and never hit the network. `EviteClient` and `loginWithPassword` accept injectable deps for this.
-- **Confirmation.** Every write tool takes `confirmToken` (`confirmTokenParam`) and calls mcp-utils' shared `confirmWrite(ctx, { tool, action, message, account: undefined, target, payload, willSend, preview?: { caveat }, confirmToken })` before touching the client; `if (gate) return gate;`. A client with elicitation gets a real prompt. Otherwise the first call makes **no write** — at most a read-only GET to build an exact preview (`evite_update_guest` fetches the draft guest list via `client.buildGuestUpdate` to merge the stored invite method/phone) — and returns `status: "confirmation-required"`, a preview (`willSend` + any `caveat`) and a `confirmToken`; only a repeat call with that token reaches `client.write(...)`. The token (and, on a client with elicitation, the acceptance) binds the tool, the target and a hash of `payload` — exactly what the client method receives — plus the displayed preview, so build the payload fresh on every call (upload_photo re-stats the file) and a change between the phases is refused as `DRAFT_CHANGED`. Tokens are single-use (`TOKEN_REUSED`) and expire (`MCP_CONFIRM_TTL_SECONDS`). `MCP_CONFIRM_MODE=refuse` turns the token fallback off. `write()` is the *only* thing that mutates Evite.
+- **Confirmation.** Every write tool takes `confirmToken` (`confirmTokenParam`) and calls mcp-utils' shared `confirmWrite(ctx, { tool, action, message, account: undefined, target, payload, willSend, preview?: { caveat }, confirmToken })` before touching the client; `if (gate) return gate;`. A client with elicitation gets a real prompt. Otherwise the first call makes **no write** — at most a read-only GET to build an exact preview (`evite_update_guest` fetches the draft guest list via `client.buildGuestUpdate` to merge the stored invite method/phone) — and returns `status: "confirmation-required"`, a preview (`willSend` + any `caveat`) and a `confirmToken`; only a repeat call with that token reaches `client.write(...)`. The token (and, on a client with elicitation, the acceptance) binds the tool, the target and a hash of `payload` — exactly what the client method receives — plus the displayed preview, so build the payload fresh on every call (upload_photo re-reads the file or blob and binds its sha256) and a change between the phases is refused as `DRAFT_CHANGED`. Tokens are single-use (`TOKEN_REUSED`) and expire (`MCP_CONFIRM_TTL_SECONDS`). `MCP_CONFIRM_MODE=refuse` turns the token fallback off. `write()` is the *only* thing that mutates Evite.
 - **stderr-only stdio.** Never `console.log` to stdout — it corrupts the MCP stdio framing. `runMcp` owns the transport; tool output goes through `minifiedResult()` (see the result-shape bullet below).
 - **100% coverage.** `vitest.config.ts` enforces **100% lines/functions/branches/statements** on `src/**` (excluding `src/index.ts`). `npm run test:coverage` fails CI on any gap. Use `/* v8 ignore */` only for genuinely unreachable defensive branches.
 - All tools are `evite_*`-prefixed; results go through `minifiedResult()` — read tools via `viewResponse()` (`src/view.ts`), which picks the rung and then calls it; write tools and the healthcheck call it directly. There is no `textResult()` here.
@@ -113,6 +120,7 @@ All endpoints are live-verified (probe 2026-06-01/02) — see `docs/EVITE-API.md
 - **Assumed-not-captured bodies (issue #3):** `evite_send_message` and `evite_send` endpoints are verified but their exact request **bodies** are still assumed (the observer captured the URL, not the body). `broadcast`'s body, by contrast, *was* fully captured.
 - **`create_event` returns 500 on success:** the draft IS created but a secondary post-create step 500s. `createEvent()` catches that 500 (`EviteApiError.status`), re-lists the host's drafts, and returns `{created: true, eventId}` for the fresh same-title draft — or `{created: 'unknown'}` with a do-not-retry note. It never throws on that 500, so nothing retries into duplicate drafts (fleet-audit #101).
 - **Templates are scraped, not API:** the gallery is server-rendered; `listTemplates` regex-scrapes `/invitation/{slug}/…` links out of the category page HTML.
+- **Photo uploads take one of three sources, and the client never reads the disk.** `evite_upload_photo` resolves exactly one of `path` | `inline` | `blob_key` through `resolvePhotoSource` (`src/photo-source.ts`, on mcp-utils' `resolveUploadSource`: image types only, 20 MB, bytes must match the type) and hands `EviteClient.uploadPhoto` bytes. A local `path` goes through `confineUploadPath` first, so its refusals are the repo's own. On a hosted deployment (`MCP_DATA_DIR` or `MCP_BLOB_BASE_URL` set) `resolveUploadSource` refuses the path and points at the slot flow: `evite_upload_slots` → PUT → `blob_key`. The file is resolved on the preview AND on the confirm, with its `sha256` in the payload, so a changed file or blob is `DRAFT_CHANGED`. `source.release()` (the blob delete) runs only after `uploadPhoto` resolves, and its outcome is reported as `blob` in the result. A failed upload throws and keeps the blob for a retry.
 - **Draft guests only persist on a finalized event** (status `sending`); on a bare new `draft` the add-guest POST 200s but drops the guest.
 
 ## Versioning

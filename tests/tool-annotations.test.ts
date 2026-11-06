@@ -5,6 +5,7 @@ import { registerEventTools } from '../src/tools/events.js';
 import { registerGuestTools } from '../src/tools/guests.js';
 import { registerMessageTools } from '../src/tools/messages.js';
 import { registerWriteTools } from '../src/tools/writes.js';
+import { registerUploadTools } from '../src/tools/uploads.js';
 
 /**
  * The fleet annotation meta-test (modelled on skylight-mcp). It reads the
@@ -33,6 +34,7 @@ function registeredAnnotations(): Record<string, Ann | undefined> {
     registerGuestTools,
     registerMessageTools,
     registerWriteTools,
+    registerUploadTools,
   ]) {
     register(server, client);
   }
@@ -41,7 +43,7 @@ function registeredAnnotations(): Record<string, Ann | undefined> {
 
 describe('every tool declares its annotations', () => {
   it('registers the full surface (guards against a registrar being dropped here)', () => {
-    expect(Object.keys(registeredAnnotations())).toHaveLength(20);
+    expect(Object.keys(registeredAnnotations())).toHaveLength(21);
   });
 
   it('sets an explicit boolean readOnlyHint on all of them', () => {
@@ -72,11 +74,12 @@ describe('every tool declares its annotations', () => {
     expect(missing).toEqual([]);
   });
 
-  it('marks only the local healthcheck closed-world', () => {
+  it('marks only the local tools closed-world (the healthcheck, and slot minting, which signs a URL in-process)', () => {
     const closed = Object.entries(registeredAnnotations())
       .filter(([, a]) => a?.openWorldHint === false)
-      .map(([name]) => name);
-    expect(closed).toEqual(['evite_healthcheck']);
+      .map(([name]) => name)
+      .sort();
+    expect(closed).toEqual(['evite_healthcheck', 'evite_upload_slots']);
   });
 
   it('holds the additive writes to the ones with an inverse that reaches nobody', () => {

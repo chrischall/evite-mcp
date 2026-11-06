@@ -6,6 +6,7 @@ import { registerEventTools } from './tools/events.js';
 import { registerGuestTools } from './tools/guests.js';
 import { registerMessageTools } from './tools/messages.js';
 import { registerWriteTools } from './tools/writes.js';
+import { registerUploadTools } from './tools/uploads.js';
 
 const client = new EviteClient();
 
@@ -20,5 +21,6 @@ await runMcp({
     registerGuestTools,
     registerMessageTools,
     registerWriteTools,
+    registerUploadTools,
   ],
 });

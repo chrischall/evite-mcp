@@ -93,3 +93,8 @@ egress:
     # never the apex, and matching is exact, so both wildcards are needed.
     - '*.firebaseio.com'
     - '*.firebasedatabase.app'
+    # Not listed: mcp-host's own blob store (MCP_BLOB_BASE_URL, the gateway
+    # serving this connector — its host differs per deployment). The server
+    # GETs and DELETEs the photos a caller PUT through evite_upload_slots
+    # (evite_upload_photo `blob_key`). Signed requests only; no Evite
+    # credential is ever sent there.

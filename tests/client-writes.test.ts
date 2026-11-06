@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { writeFileSync, rmSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   EviteClient,
   CSRF_HEADER,
@@ -32,6 +32,9 @@ const fakeSession = {
   cookieHeader: 'x-evite-session=s; evtsession=e; csrftoken=tok123',
   csrfToken: 'tok123',
 };
+/** The bytes + name the upload tool hands the client once it has resolved the file. */
+const fromFile = (path: string) => ({ bytes: new Uint8Array(readFileSync(path)), fileName: basename(path) });
+
 const newClient = (session = fakeSession) =>
   new EviteClient({ resolveSession: async () => session });
 
@@ -45,16 +48,11 @@ function headersOf(spy: ReturnType<typeof mockFetch>, n = 0): Record<string, str
   return init.headers as Record<string, string>;
 }
 
-// Upload tests write their fixtures under the OS temp dir; confine uploads there
-// (the confinement describe below sets its own EVITE_UPLOAD_DIR per test).
-const savedUploadDir = process.env.EVITE_UPLOAD_DIR;
-beforeEach(() => {
-  process.env.EVITE_UPLOAD_DIR = tmpdir();
-});
+// The client never reads the disk: the upload tool resolves the file (path,
+// inline or blob) and hands it bytes. Upload tests write a temp fixture and
+// pass its bytes via fromFile.
 afterEach(() => {
   vi.restoreAllMocks();
-  if (savedUploadDir === undefined) delete process.env.EVITE_UPLOAD_DIR;
-  else process.env.EVITE_UPLOAD_DIR = savedUploadDir;
 });
 
 describe('EviteClient — rsvp', () => {
@@ -394,7 +392,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     writeFileSync(path, jpeg);
     const spy = uploadFetch();
     try {
-      await newClient().uploadPhoto('EV', { path, guestId: 'GUEST9' });
+      await newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'GUEST9' });
       const reqIdx = spy.mock.calls.findIndex((c) => String(c[0]).includes('/upload/request/'));
       const reqBody = JSON.parse((spy.mock.calls[reqIdx]![1] as RequestInit).body as string);
       expect(reqBody).toMatchObject({ mimetype: 'image/jpeg', width: 4000, height: 3000 });
@@ -407,7 +405,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     const spy = uploadFetch();
     const path = writePng();
     try {
-      const result = await newClient().uploadPhoto('EV', { path, guestId: 'GUEST9' });
+      const result = await newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'GUEST9' });
       expect(result.photoId).toBe('PHOTO9');
       expect(result.accessUrl).toContain('PHOTO9');
 
@@ -449,20 +447,12 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     }
   });
 
-  it('throws on an unreadable file before any network call', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch');
-    await expect(
-      newClient().uploadPhoto('EV', { path: join(tmpdir(), 'evite-no-such-file.png'), guestId: 'G' }),
-    ).rejects.toThrow(/Cannot read image file/);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
   it('rejects an extension-less non-image file (before any network call)', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
     const path = join(tmpdir(), 'evite-test-unknown.dat');
     writeFileSync(path, 'plain text, not a picture');
     try {
-      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/not an image/);
+      await expect(newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' })).rejects.toThrow(/not an image/);
       expect(spy).not.toHaveBeenCalled();
     } finally {
       rmSync(path, { force: true });
@@ -478,7 +468,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     writeFileSync(path, '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n');
     try {
       await expect(
-        newClient().uploadPhoto('EV', { path, guestId: 'G', mimetype: 'image/jpeg' }),
+        newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G', mimetype: 'image/jpeg' }),
       ).rejects.toThrow(/not an image/);
       expect(spy).not.toHaveBeenCalled();
     } finally {
@@ -491,7 +481,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     const path = join(tmpdir(), 'evite-test-secrets.png');
     writeFileSync(path, 'EVITE_PASSWORD=hunter2\n');
     try {
-      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/not an image/);
+      await expect(newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' })).rejects.toThrow(/not an image/);
       expect(spy).not.toHaveBeenCalled();
     } finally {
       rmSync(path, { force: true });
@@ -503,7 +493,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     const path = writePng();
     try {
       await expect(
-        newClient().uploadPhoto('EV', { path, guestId: 'G', mimetype: 'image/jpeg' }),
+        newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G', mimetype: 'image/jpeg' }),
       ).rejects.toThrow(/image\/png.*image\/jpeg|image\/jpeg.*image\/png/);
       expect(spy).not.toHaveBeenCalled();
     } finally {
@@ -516,7 +506,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     const path = writePng();
     try {
       await expect(
-        newClient().uploadPhoto('EV', { path, guestId: 'G', mimetype: 'application/octet-stream' }),
+        newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G', mimetype: 'application/octet-stream' }),
       ).rejects.toThrow(/Unsupported mimetype/);
       expect(spy).not.toHaveBeenCalled();
     } finally {
@@ -529,7 +519,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     const path = join(tmpdir(), 'evite-test-noext-image');
     writeFileSync(path, PNG);
     try {
-      await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+      await newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' });
       const reqIdx = spy.mock.calls.findIndex((c) => String(c[0]).includes('/upload/request/'));
       const reqBody = JSON.parse((spy.mock.calls[reqIdx]![1] as RequestInit).body as string);
       expect(reqBody.mimetype).toBe('image/png');
@@ -542,7 +532,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     const spy = uploadFetch();
     const path = writePng();
     try {
-      const result = await newClient().uploadPhoto('EV', { path, guestId: 'G', mimetype: 'image/png' });
+      const result = await newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G', mimetype: 'image/png' });
       expect(result.photoId).toBe('PHOTO9');
       expect(spy).toHaveBeenCalled();
     } finally {
@@ -556,7 +546,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     // A real PNG header padded to 1 byte over MAX_UPLOAD_BYTES.
     writeFileSync(path, Buffer.concat([PNG, Buffer.alloc(20_000_001 - PNG.length)]));
     try {
-      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/photo upload limit/);
+      await expect(newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' })).rejects.toThrow(/photo upload limit/);
       expect(spy).not.toHaveBeenCalled();
     } finally {
       rmSync(path, { force: true });
@@ -569,7 +559,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     );
     const path = writePng();
     try {
-      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/usable upload ticket/);
+      await expect(newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' })).rejects.toThrow(/usable upload ticket/);
     } finally {
       rmSync(path, { force: true });
     }
@@ -582,7 +572,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     );
     const path = writePng();
     try {
-      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/determine the photo id/);
+      await expect(newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' })).rejects.toThrow(/determine the photo id/);
     } finally {
       rmSync(path, { force: true });
     }
@@ -602,7 +592,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     });
     const path = writePng();
     try {
-      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/Google Cloud Storage error 400/);
+      await expect(newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' })).rejects.toThrow(/Google Cloud Storage error 400/);
     } finally {
       rmSync(path, { force: true });
     }
@@ -623,7 +613,7 @@ describe('EviteClient — uploadPhoto (VERIFIED 4-step GCS flow)', () => {
     });
     const path = writePng();
     try {
-      const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+      const result = await newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' });
       expect(result.photoId).toBe('PID');
       expect(result.accessUrl).toBeUndefined();
       // finishUrl was empty → Step 3 (the finish endpoint) is never called.
@@ -1167,7 +1157,7 @@ describe('EviteClient — uploadPhoto error/edge branches', () => {
     });
     const path = writePng();
     try {
-      await expect(newClient().uploadPhoto('EV', { path, guestId: 'G' })).rejects.toThrow(/Google Cloud Storage error 400/);
+      await expect(newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' })).rejects.toThrow(/Google Cloud Storage error 400/);
     } finally { rmSync(path, { force: true }); }
   });
 
@@ -1183,20 +1173,12 @@ describe('EviteClient — uploadPhoto error/edge branches', () => {
     });
     const path = writePng();
     try {
-      const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
+      const result = await newClient().uploadPhoto('EV', { ...fromFile(path), guestId: 'G' });
       expect(result.photoId).toBe('PID');
       expect(result.accessUrl).toBe('https://cdn/PID');
     } finally { rmSync(path, { force: true }); }
   });
 
-  it('expands a ~ path before reading (and fails cleanly when the file is absent)', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch');
-    delete process.env.EVITE_UPLOAD_DIR; // the default root, ~/Downloads/evite-mcp
-    await expect(
-      newClient().uploadPhoto('EV', { path: '~/Downloads/evite-mcp/evite-mcp-no-such-file.png', guestId: 'G' }),
-    ).rejects.toThrow(/Cannot read image file/);
-    expect(spy).not.toHaveBeenCalled();
-  });
 });
 
 describe('EviteClient — sendInvitation (confirm-gated)', () => {
@@ -1382,128 +1364,3 @@ describe('cookie/CSRF helpers (pure)', () => {
   });
 });
 
-describe('EviteClient — uploadPhoto confinement (EVITE_UPLOAD_DIR)', () => {
-  const PNG = Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    Buffer.from([0, 0, 0, 13]),
-    Buffer.from('IHDR'),
-    Buffer.from([0, 0, 0, 3, 0, 0, 0, 2]),
-  ]);
-  let base: string;
-  let allowed: string;
-  let outside: string;
-  const saved = process.env.EVITE_UPLOAD_DIR;
-
-  beforeEach(() => {
-    base = mkdtempSync(join(tmpdir(), 'evite-confine-'));
-    allowed = join(base, 'allowed');
-    outside = join(base, 'outside');
-    mkdirSync(allowed);
-    mkdirSync(outside);
-    delete process.env.EVITE_UPLOAD_DIR;
-  });
-  afterEach(() => {
-    rmSync(base, { recursive: true, force: true });
-    if (saved === undefined) delete process.env.EVITE_UPLOAD_DIR;
-    else process.env.EVITE_UPLOAD_DIR = saved;
-  });
-
-  function successFetch() {
-    return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-      const u = String(url);
-      if (u.includes('/upload/request/')) {
-        return new Response(JSON.stringify({
-          upload_url: 'https://storage.googleapis.com/b',
-          access_url: 'https://cdn/PID',
-          upload_form: { key: 'events/EV/albums/1/PID', policy: 'P', signature: 'S' },
-        }), { status: 200 });
-      }
-      if (u.includes('storage.googleapis.com')) return new Response(null, { status: 204 });
-      if (u.includes('/shared-gallery/')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
-      throw new Error(`unexpected fetch: ${u}`);
-    });
-  }
-
-  it('refuses a path outside EVITE_UPLOAD_DIR before any byte is read or uploaded', async () => {
-    const path = join(outside, 'photo.png');
-    writeFileSync(path, PNG);
-    process.env.EVITE_UPLOAD_DIR = `${join(base, 'nope')}${delimiter}${allowed}`;
-    const spy = successFetch();
-    const err = await newClient().uploadPhoto('EV', { path, guestId: 'G' }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(McpToolError);
-    expect((err as McpToolError).message).toMatch(/outside the allowed upload directories/);
-    expect((err as McpToolError).hint).toMatch(/EVITE_UPLOAD_DIR/);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('uploads a file inside EVITE_UPLOAD_DIR', async () => {
-    const path = join(allowed, 'photo.png');
-    writeFileSync(path, PNG);
-    process.env.EVITE_UPLOAD_DIR = allowed;
-    const spy = successFetch();
-    const result = await newClient().uploadPhoto('EV', { path, guestId: 'G' });
-    expect(result.photoId).toBe('PID');
-    expect(spy.mock.calls.some(([u]) => String(u).includes('storage.googleapis.com'))).toBe(true);
-  });
-
-  it('a missing file inside EVITE_UPLOAD_DIR still fails as an unreadable image', async () => {
-    process.env.EVITE_UPLOAD_DIR = allowed;
-    const spy = successFetch();
-    await expect(
-      newClient().uploadPhoto('EV', { path: join(allowed, 'missing.png'), guestId: 'G' }),
-    ).rejects.toThrow(/Cannot read image file/);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('unset EVITE_UPLOAD_DIR confines uploads to ~/Downloads/evite-mcp (fleet-audit #1243)', async () => {
-    const path = join(outside, 'photo.png');
-    writeFileSync(path, PNG);
-    const spy = successFetch();
-    const err = await newClient().uploadPhoto('EV', { path, guestId: 'G' }).catch((e: unknown) => e);
-    expect((err as McpToolError).message).toMatch(/outside the allowed upload directories/);
-    expect((err as McpToolError).hint).toMatch(/Downloads\/evite-mcp/);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('refuses a hidden file or a file under a hidden directory inside the upload directory', async () => {
-    process.env.EVITE_UPLOAD_DIR = allowed;
-    mkdirSync(join(allowed, '.ssh'));
-    writeFileSync(join(allowed, '.ssh', 'photo.png'), PNG);
-    writeFileSync(join(allowed, '.photo.png'), PNG);
-    const spy = successFetch();
-    for (const path of [join(allowed, '.ssh', 'photo.png'), join(allowed, '.photo.png')]) {
-      const err = await newClient().uploadPhoto('EV', { path, guestId: 'G' }).catch((e: unknown) => e);
-      expect((err as McpToolError).message).toMatch(/hidden/);
-    }
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('refuses a symlink inside the upload directory that points outside it', async () => {
-    process.env.EVITE_UPLOAD_DIR = allowed;
-    const target = join(outside, 'photo.png');
-    writeFileSync(target, PNG);
-    symlinkSync(target, join(allowed, 'link.png'));
-    const spy = successFetch();
-    const err = await newClient().uploadPhoto('EV', { path: join(allowed, 'link.png'), guestId: 'G' }).catch((e: unknown) => e);
-    expect((err as McpToolError).message).toMatch(/outside the allowed upload directories/);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('refuses a symlink to a hidden file elsewhere in the upload directory', async () => {
-    process.env.EVITE_UPLOAD_DIR = allowed;
-    writeFileSync(join(allowed, '.secret.png'), PNG);
-    symlinkSync(join(allowed, '.secret.png'), join(allowed, 'innocent.png'));
-    const spy = successFetch();
-    const err = await newClient().uploadPhoto('EV', { path: join(allowed, 'innocent.png'), guestId: 'G' }).catch((e: unknown) => e);
-    expect((err as McpToolError).message).toMatch(/hidden/);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('resolves a relative path against the upload directory', async () => {
-    process.env.EVITE_UPLOAD_DIR = allowed;
-    writeFileSync(join(allowed, 'photo.png'), PNG);
-    successFetch();
-    const result = await newClient().uploadPhoto('EV', { path: 'photo.png', guestId: 'G' });
-    expect(result.photoId).toBe('PID');
-  });
-});

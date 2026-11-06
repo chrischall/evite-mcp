@@ -179,7 +179,11 @@
     },
     {
       "name": "evite_upload_photo",
-      "description": "Upload a local image to an event's shared photo album (asks you to confirm first)"
+      "description": "Upload a photo (local path, inline base64, or an upload-slot blob) to an event's shared photo album (asks you to confirm first)"
+    },
+    {
+      "name": "evite_upload_slots",
+      "description": "Get signed upload links for photos — how the hosted connector receives a photo for evite_upload_photo"
     },
     {
       "name": "evite_healthcheck",

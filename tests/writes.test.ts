@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CONFIRM_FLOW_SENTENCE } from '@chrischall/mcp-utils';
 import { createTestHarness, parseToolResult, type TestHarnessOptions } from '@chrischall/mcp-utils/test';
 import type { EviteClient } from '../src/client.js';
 import { registerWriteTools } from '../src/tools/writes.js';
+import { PNG, uploadKey, useFakeBlobStore } from './_blob.js';
 
 /**
  * A fake EviteClient whose write methods are spies returning a canned result.
@@ -365,158 +367,335 @@ describe('evite_broadcast — bound to the event thread as read (fleet-audit #11
 
 describe('evite_upload_photo', () => {
   // Uploads are confined to EVITE_UPLOAD_DIR (default ~/Downloads/evite-mcp);
-  // these tests put their files under the OS temp dir and confine there.
+  // these tests put their files in a fresh temp dir and confine there. The
+  // hosted env is cleared so a developer's shell cannot flip the path route.
+  let dir: string;
   beforeEach(() => {
-    process.env.EVITE_UPLOAD_DIR = tmpdir();
+    dir = mkdtempSync(join(tmpdir(), 'evite-upload-'));
+    process.env.EVITE_UPLOAD_DIR = dir;
+    delete process.env.MCP_DATA_DIR;
+    delete process.env.MCP_BLOB_BASE_URL;
+    delete process.env.MCP_BLOB_SIGNING_KEY;
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const b64 = (b: Uint8Array | string) => Buffer.from(b).toString('base64');
+  const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
+
+  it('documents all three routes and the hosted slot flow', async () => {
+    const h = await harnessFor(fakeClient());
+    const tool = (await h.client.listTools()).tools.find((t) => t.name === 'evite_upload_photo')!;
+    expect(tool.description).toMatch(/evite_upload_slots/);
+    const props = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(props)).toEqual(expect.arrayContaining(['path', 'inline', 'blob_key']));
+    await h.close();
   });
 
-  it('refuses a path outside the upload directory BEFORE the gate, revealing nothing about it (#1243)', async () => {
+  it('refuses none of path | inline | blob_key before the gate', async () => {
     guardFetch();
-    const dir = mkdtempSync(join(tmpdir(), 'evite-outside-'));
-    const file = join(dir, 'id_ed25519');
-    writeFileSync(file, Buffer.alloc(4321));
-    process.env.EVITE_UPLOAD_DIR = join(dir, 'uploads');
-    try {
+    const client = fakeClient();
+    const h = await harnessFor(client);
+    const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G' });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res)).toMatch(/exactly one of path, inline or blob_key/);
+    expect(JSON.stringify(res)).not.toMatch(/confirmToken/);
+    expect(client.uploadPhoto).not.toHaveBeenCalled();
+    await h.close();
+  });
+
+  it('refuses two routes at once', async () => {
+    guardFetch();
+    const h = await harnessFor(fakeClient());
+    const res = await h.callTool('evite_upload_photo', {
+      event_id: 'E',
+      guest_id: 'G',
+      path: 'cake.png',
+      inline: { filename: 'cake.png', content_base64: b64(PNG) },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res)).toMatch(/exactly one of path, inline or blob_key/);
+    await h.close();
+  });
+
+  describe('local path (unchanged)', () => {
+    it('refuses a path outside the upload directory BEFORE the gate, revealing nothing about it (#1243)', async () => {
+      guardFetch();
+      const outside = mkdtempSync(join(tmpdir(), 'evite-outside-'));
+      const file = join(outside, 'id_ed25519');
+      writeFileSync(file, Buffer.alloc(4321));
+      try {
+        const client = fakeClient();
+        const h = await harnessFor(client);
+        const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
+        expect(res.isError).toBe(true);
+        const text = JSON.stringify(res);
+        expect(text).toMatch(/outside the allowed upload directories/);
+        expect(text).not.toMatch(/4321|size_bytes|confirmToken/);
+        expect(client.uploadPhoto).not.toHaveBeenCalled();
+        await h.close();
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it('refuses a hidden path inside the upload directory before the gate', async () => {
+      guardFetch();
+      const h = await harnessFor(fakeClient());
+      const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: '.ssh/id_ed25519' });
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res)).toMatch(/hidden/);
+      expect(JSON.stringify(res)).not.toMatch(/size_bytes|confirmToken/);
+      await h.close();
+    });
+
+    it('phase 1: previews the resolved path, size and sha256, and makes no call', async () => {
+      const fetchSpy = guardFetch();
+      writeFileSync(join(dir, 'cake.png'), PNG);
       const client = fakeClient();
       const h = await harnessFor(client);
-      const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
-      expect(res.isError).toBe(true);
-      const text = JSON.stringify(res);
-      expect(text).toMatch(/outside the allowed upload directories/);
-      expect(text).not.toMatch(/4321|size_bytes|confirmToken/);
+      const p1 = await phaseOne(h, 'evite_upload_photo', { event_id: 'EVENTID0', guest_id: 'GUEST9', path: 'cake.png' });
       expect(client.uploadPhoto).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(p1.preview.willSend).toMatchObject({
+        source: 'path',
+        path: 'cake.png',
+        resolved_path: join(dir, 'cake.png'),
+        file_name: 'cake.png',
+        mimetype: 'image/png',
+        size_bytes: PNG.length,
+        sha256: sha(PNG),
+      });
       await h.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('refuses a hidden path inside the upload directory before the gate', async () => {
-    guardFetch();
-    const client = fakeClient();
-    const h = await harnessFor(client);
-    const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: '.ssh/id_ed25519' });
-    expect(res.isError).toBe(true);
-    expect(JSON.stringify(res)).toMatch(/hidden/);
-    expect(JSON.stringify(res)).not.toMatch(/size_bytes|confirmToken/);
-    await h.close();
-  });
-
-  it('phase 1: previews and makes no call', async () => {
-    const fetchSpy = guardFetch();
-    const client = fakeClient();
-    const h = await harnessFor(client);
-    const p1 = await phaseOne(h, 'evite_upload_photo', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      path: 'cake.jpg',
     });
-    expect(client.uploadPhoto).not.toHaveBeenCalled();
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(p1.preview.willSend.path).toBe('cake.jpg');
-    expect(p1.preview.willSend.resolved_path).toBe(join(tmpdir(), 'cake.jpg'));
-    await h.close();
-  });
 
-  it('preview shows the resolved absolute path and the file size', async () => {
-    guardFetch();
-    const dir = mkdtempSync(join(tmpdir(), 'evite-preview-'));
-    const file = join(dir, 'cake.png');
-    writeFileSync(file, Buffer.alloc(1234));
-    try {
-      const h = await harnessFor(fakeClient());
-      const p1 = await phaseOne(h, 'evite_upload_photo', { event_id: 'E', guest_id: 'G', path: file });
-      expect(p1.preview.willSend.resolved_path).toBe(file);
-      expect(p1.preview.willSend.size_bytes).toBe(1234);
-      // A ~ path resolves against the home directory; a missing file has no size.
+    it('expands a ~ path against the home directory', async () => {
+      guardFetch();
       delete process.env.EVITE_UPLOAD_DIR; // the default root, ~/Downloads/evite-mcp
-      const p2 = await phaseOne(h, 'evite_upload_photo', {
+      const h = await harnessFor(fakeClient());
+      const res = await h.callTool('evite_upload_photo', {
         event_id: 'E',
         guest_id: 'G',
         path: '~/Downloads/evite-mcp/evite-mcp-no-such-file.png',
       });
-      expect(p2.preview.willSend.resolved_path).toBe(
-        join(homedir(), 'Downloads', 'evite-mcp', 'evite-mcp-no-such-file.png'),
-      );
-      expect(p2.preview.willSend.size_bytes).toBeUndefined();
+      // A missing file is now refused at the preview, naming the resolved path.
+      expect(res.isError).toBe(true);
+      const text = JSON.stringify(res);
+      expect(text).toContain(join(homedir(), 'Downloads', 'evite-mcp', 'evite-mcp-no-such-file.png'));
+      expect(text).toMatch(/cannot be read/);
       await h.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it('refuses the token when the file changed between preview and upload (DRAFT_CHANGED)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'evite-preview-'));
-    const file = join(dir, 'cake.png');
-    writeFileSync(file, Buffer.alloc(10));
-    try {
+    it('refuses the token when the file changed between preview and upload (DRAFT_CHANGED)', async () => {
+      const file = join(dir, 'cake.png');
+      writeFileSync(file, PNG);
       const client = fakeClient();
       const h = await harnessFor(client);
       const args = { event_id: 'E', guest_id: 'G', path: file };
       const p1 = await phaseOne(h, 'evite_upload_photo', args);
-      writeFileSync(file, Buffer.alloc(20));
+      writeFileSync(file, Buffer.concat([PNG, Buffer.alloc(10)]));
       const res = await h.callTool('evite_upload_photo', { ...args, confirmToken: p1.confirmToken });
       expect(res.isError).toBe(true);
       expect((parseToolResult(res) as { error: string }).error).toBe('DRAFT_CHANGED');
       expect(client.uploadPhoto).not.toHaveBeenCalled();
       await h.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it('refuses the token when a same-size file replaced it between preview and upload (DRAFT_CHANGED)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'evite-preview-'));
-    const file = join(dir, 'cake.png');
-    writeFileSync(file, Buffer.alloc(10, 1));
-    utimesSync(file, 1_000_000, 1_000_000);
-    try {
+    it('refuses the token when a same-size file replaced it between preview and upload (DRAFT_CHANGED)', async () => {
+      const file = join(dir, 'cake.png');
+      writeFileSync(file, Buffer.concat([PNG, Buffer.alloc(10, 1)]));
       const client = fakeClient();
       const h = await harnessFor(client);
       const args = { event_id: 'E', guest_id: 'G', path: file };
       const p1 = await phaseOne(h, 'evite_upload_photo', args);
-      // Same byte size, different content and modification time.
-      writeFileSync(file, Buffer.alloc(10, 2));
-      utimesSync(file, 2_000_000, 2_000_000);
+      writeFileSync(file, Buffer.concat([PNG, Buffer.alloc(10, 2)])); // same size, different bytes
       const res = await h.callTool('evite_upload_photo', { ...args, confirmToken: p1.confirmToken });
       expect(res.isError).toBe(true);
       expect((parseToolResult(res) as { error: string }).error).toBe('DRAFT_CHANGED');
       expect(client.uploadPhoto).not.toHaveBeenCalled();
       await h.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
+
+    it('rejects a mimetype outside the supported image types at the schema', async () => {
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const res = await h.callTool('evite_upload_photo', {
+        event_id: 'E',
+        guest_id: 'G',
+        path: '~/.ssh/id_ed25519',
+        mimetype: 'text/plain',
+      });
+      expect(res.isError).toBe(true);
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      await h.close();
+    });
+
+    it('phase 2: calls client.uploadPhoto once with the file bytes, and reports no blob', async () => {
+      writeFileSync(join(dir, 'cake.png'), PNG);
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const { res } = await confirmed(h, 'evite_upload_photo', {
+        event_id: 'EVENTID0',
+        guest_id: 'GUEST9',
+        path: 'cake.png',
+      });
+      expect(res.isError).toBeFalsy();
+      expect(client.uploadPhoto).toHaveBeenCalledTimes(1);
+      const [eventId, input] = client.uploadPhoto.mock.calls[0]! as [string, Record<string, unknown>];
+      expect(eventId).toBe('EVENTID0');
+      expect(input).toMatchObject({ guestId: 'GUEST9', fileName: 'cake.png', mimetype: 'image/png' });
+      expect(Buffer.from(input.bytes as Uint8Array).equals(PNG)).toBe(true);
+      const body = parseToolResult(res) as Record<string, unknown>;
+      expect(body.photoId).toBe('PHOTO9');
+      expect(body).not.toHaveProperty('blob');
+      await h.close();
+    });
+
+    it('passes an explicit mimetype through to the client', async () => {
+      writeFileSync(join(dir, 'cake.png'), PNG);
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      await confirmed(h, 'evite_upload_photo', { event_id: 'E', guest_id: 'G', path: 'cake.png', mimetype: 'image/png' });
+      expect(client.uploadPhoto.mock.calls[0]![1]).toMatchObject({ mimetype: 'image/png' });
+      await h.close();
+    });
   });
 
-  it('rejects a mimetype outside the supported image types at the schema', async () => {
-    const client = fakeClient();
-    const h = await harnessFor(client);
-    const res = await h.callTool('evite_upload_photo', {
-      event_id: 'E',
-      guest_id: 'G',
-      path: '~/.ssh/id_ed25519',
-      mimetype: 'text/plain',
+  describe('inline base64', () => {
+    it('previews and uploads the decoded image', async () => {
+      guardFetch();
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const args = { event_id: 'E', guest_id: 'G', inline: { filename: 'party photo.png', content_base64: b64(PNG) } };
+      const { p1, res } = await confirmed(h, 'evite_upload_photo', args);
+      expect(p1.preview.willSend).toMatchObject({
+        source: 'inline',
+        file_name: 'party photo.png',
+        mimetype: 'image/png',
+        size_bytes: PNG.length,
+        sha256: sha(PNG),
+      });
+      expect(p1.preview.willSend).not.toHaveProperty('path');
+      expect(res.isError).toBeFalsy();
+      expect(client.uploadPhoto.mock.calls[0]![1]).toMatchObject({ fileName: 'party photo.png', mimetype: 'image/png' });
+      await h.close();
     });
-    expect(res.isError).toBe(true);
-    expect(client.uploadPhoto).not.toHaveBeenCalled();
-    await h.close();
+
+    it('refuses bad base64 before the gate', async () => {
+      guardFetch();
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const res = await h.callTool('evite_upload_photo', {
+        event_id: 'E',
+        guest_id: 'G',
+        inline: { filename: 'cake.png', content_base64: 'not base64!!' },
+      });
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res)).toMatch(/not valid base64/);
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      await h.close();
+    });
+
+    it('refuses a non-image before the gate', async () => {
+      guardFetch();
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const res = await h.callTool('evite_upload_photo', {
+        event_id: 'E',
+        guest_id: 'G',
+        inline: { filename: 'notes.txt', content_base64: b64('hello') },
+      });
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res)).toMatch(/not accepted/);
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      await h.close();
+    });
   });
 
-  it('phase 2: calls client.uploadPhoto once with path + guestId', async () => {
-    const client = fakeClient();
-    const h = await harnessFor(client);
-    await confirmed(h, 'evite_upload_photo', {
-      event_id: 'EVENTID0',
-      guest_id: 'GUEST9',
-      path: 'cake.jpg',
+  describe('hosted', () => {
+    it('refuses a path with the slot-flow instructions, before the gate', async () => {
+      useFakeBlobStore();
+      writeFileSync(join(dir, 'cake.png'), PNG);
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const res = await h.callTool('evite_upload_photo', { event_id: 'E', guest_id: 'G', path: 'cake.png' });
+      expect(res.isError).toBe(true);
+      const text = JSON.stringify(res);
+      expect(text).toMatch(/remote and can't read files on your machine/);
+      expect(text).toMatch(/evite_upload_slots/);
+      expect(text).not.toMatch(/confirmToken/);
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      await h.close();
     });
-    expect(client.uploadPhoto).toHaveBeenCalledTimes(1);
-    expect(client.uploadPhoto).toHaveBeenCalledWith('EVENTID0', {
-      path: 'cake.jpg',
-      guestId: 'GUEST9',
-      mimetype: undefined,
+  });
+
+  describe('blob_key (upload slot)', () => {
+    it('binds sha256 in the preview, uploads on confirm, then deletes the blob and reports it', async () => {
+      const store = useFakeBlobStore();
+      const key = uploadKey('cake.png');
+      store.put(key, PNG, 'image/png');
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const args = { event_id: 'E', guest_id: 'G', blob_key: key };
+      const p1 = await phaseOne(h, 'evite_upload_photo', args);
+      expect(p1.preview.willSend).toMatchObject({ source: 'blob', blob_key: key, file_name: 'cake.png', sha256: sha(PNG) });
+      expect(store.calls.filter((c) => c.method === 'DELETE')).toEqual([]);
+      const res = await h.callTool('evite_upload_photo', { ...args, confirmToken: p1.confirmToken });
+      expect(res.isError).toBeFalsy();
+      expect(client.uploadPhoto).toHaveBeenCalledTimes(1);
+      expect(client.uploadPhoto.mock.calls[0]![1]).toMatchObject({ fileName: 'cake.png', mimetype: 'image/png' });
+      expect(parseToolResult(res)).toMatchObject({ photoId: 'PHOTO9', blob: { blob_key: key, deleted: true } });
+      expect(store.objects.has(key)).toBe(false);
+      // The delete came after the read on the confirmed call, never before.
+      expect(store.calls.map((c) => c.method)).toEqual(['GET', 'GET', 'DELETE']);
+      await h.close();
     });
-    await h.close();
+
+    it('keeps the blob when Evite refuses the photo', async () => {
+      const store = useFakeBlobStore();
+      const key = uploadKey('cake.png');
+      store.put(key, PNG, 'image/png');
+      const client = fakeClient();
+      client.uploadPhoto.mockRejectedValueOnce(new Error('Evite upload/request did not return a usable upload ticket.'));
+      const h = await harnessFor(client);
+      const { res } = await confirmed(h, 'evite_upload_photo', { event_id: 'E', guest_id: 'G', blob_key: key });
+      expect(res.isError).toBe(true);
+      expect(store.objects.has(key)).toBe(true);
+      expect(store.calls.some((c) => c.method === 'DELETE')).toBe(false);
+      await h.close();
+    });
+
+    it('reports (does not throw) a failed delete after a successful upload', async () => {
+      const store = useFakeBlobStore();
+      const key = uploadKey('cake.png');
+      store.put(key, PNG, 'image/png');
+      store.failDeletes();
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const { res } = await confirmed(h, 'evite_upload_photo', { event_id: 'E', guest_id: 'G', blob_key: key });
+      expect(res.isError).toBeFalsy();
+      const body = parseToolResult(res) as { photoId: string; blob: { deleted: boolean; error?: string } };
+      expect(body.photoId).toBe('PHOTO9');
+      expect(body.blob.deleted).toBe(false);
+      expect(body.blob.error).toMatch(/HTTP 500/);
+      await h.close();
+    });
+
+    it('refuses a blob that changed between preview and confirm (DRAFT_CHANGED), keeping it', async () => {
+      const store = useFakeBlobStore();
+      const key = uploadKey('cake.png');
+      store.put(key, PNG, 'image/png');
+      const client = fakeClient();
+      const h = await harnessFor(client);
+      const args = { event_id: 'E', guest_id: 'G', blob_key: key };
+      const p1 = await phaseOne(h, 'evite_upload_photo', args);
+      store.put(key, Buffer.concat([PNG, Buffer.alloc(4)]), 'image/png');
+      const res = await h.callTool('evite_upload_photo', { ...args, confirmToken: p1.confirmToken });
+      expect(res.isError).toBe(true);
+      expect((parseToolResult(res) as { error: string }).error).toBe('DRAFT_CHANGED');
+      expect(client.uploadPhoto).not.toHaveBeenCalled();
+      expect(store.objects.has(key)).toBe(true);
+      await h.close();
+    });
   });
 });
 

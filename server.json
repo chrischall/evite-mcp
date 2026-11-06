@@ -56,7 +56,7 @@
         },
         {
           "name": "EVITE_UPLOAD_DIR",
-          "description": "Optional. Restrict evite_upload_photo to image files inside this directory (several may be separated by the path delimiter, `:` on macOS/Linux; `~` allowed). A path outside it is refused before anything is read. Unset = any readable image file.",
+          "description": "Optional. Restrict evite_upload_photo to image files inside this directory (several may be separated by the path delimiter, `:` on macOS/Linux; `~` allowed). A path outside it, or a hidden file, is refused before anything is read. Unset = ~/Downloads/evite-mcp. Local installs only: a hosted deployment refuses paths (use evite_upload_slots + blob_key, or inline).",
           "isRequired": false,
           "format": "string"
         },

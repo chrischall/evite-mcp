@@ -10,13 +10,14 @@ import { registerEventTools, briefLine } from '../src/tools/events.js';
 import { registerGuestTools } from '../src/tools/guests.js';
 import { registerMessageTools } from '../src/tools/messages.js';
 import { registerWriteTools } from '../src/tools/writes.js';
+import { registerUploadTools } from '../src/tools/uploads.js';
 
 /**
  * Context-group hints (`_meta.mint`, mcp-host spec 2026-11-03 D4): read off the
  * config each registrar hands `registerTool` (where the hints are authored) and,
  * separately, off `tools/list` (what a host sees).
  */
-const REGISTRARS = [registerEventTools, registerGuestTools, registerMessageTools, registerWriteTools];
+const REGISTRARS = [registerEventTools, registerGuestTools, registerMessageTools, registerWriteTools, registerUploadTools];
 
 const DOMAINS = ['school', 'home', 'work', 'family', 'health', 'money', 'travel', 'food'];
 const INTENTS = ['whats-new', 'whats-due', 'whats-on', 'lookup', 'turn-on-off', 'send', 'change', 'other'];
@@ -65,6 +66,7 @@ const EXPECTED_INTENT: Record<string, string> = {
   evite_cancel_event: 'change',
   evite_reinstate_event: 'change',
   evite_duplicate_event: 'change',
+  evite_upload_slots: 'other',
 };
 
 describe('_meta.mint on every registered tool', () => {

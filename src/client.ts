@@ -1,15 +1,12 @@
-import { basename } from 'node:path';
 import {
   buildQueryString,
   CookieJar,
   detectEdgeBlock,
   EdgeBlockedError,
-  fileBlob,
   formatApiError,
   McpToolError,
   parseCookieHeader,
   RateLimitError,
-  readFileHead,
   SessionNotAuthenticatedError,
   UnreachableError,
 } from '@chrischall/mcp-utils';
@@ -19,30 +16,16 @@ import { InvalidCredentialsError } from './auth-login.js';
 import {
   IMAGE_MIMETYPES,
   imageDimensions,
+  MAX_UPLOAD_BYTES,
   mimetypeForPath,
   sameImageType,
   sniffImageMime,
 } from './image-meta.js';
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 import { eviteFetch } from './http.js';
-import { confineUploadPath, uploadRoots } from './upload-path.js';
-
-export { resolveUploadPath, confineUploadPath } from './upload-path.js';
 
 /** Deadline for the GCS image upload, which carries the file bytes. */
 const UPLOAD_TIMEOUT_MS = 120_000;
-
-/** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
-const MAX_UPLOAD_BYTES = 20_000_000;
-
-/**
- * How much of an image file is read for the type sniff and the dimensions. A
- * phone JPEG's EXIF APP1 segment alone can be 64 KB (embedded thumbnail), with
- * ICC/MPF APP2 segments after it, so the SOF frame header routinely sits past
- * 64 KB (fleet-audit #438). 1 MiB comfortably clears an EXIF + ICC + MPF stack
- * and is still a small fraction of the 20 MB upload cap.
- */
-const IMAGE_HEAD_BYTES = 1024 * 1024;
 
 /** The session-resolver signature the client depends on (injectable in tests). */
 export type SessionResolver = (opts?: ResolveSessionOptions) => Promise<ResolvedSession>;
@@ -285,13 +268,19 @@ export interface BroadcastInput {
   participantCount?: number;
 }
 
-/** Arguments to {@link EviteClient.uploadPhoto}. */
+/**
+ * Arguments to {@link EviteClient.uploadPhoto}. The client never reads the
+ * disk: the upload tool resolves the file (a confined local path, inline
+ * base64, or an upload-slot blob — src/photo-source.ts) and hands over bytes.
+ */
 export interface UploadPhotoInput {
-  /** Path to the local image file (a leading `~` is expanded). */
-  path: string;
+  /** The image's bytes. */
+  bytes: Uint8Array;
+  /** The filename Evite's storage receives. */
+  fileName: string;
   /** The uploader's guest id on the event (from {@link EviteClient.listGuests}). */
   guestId: string;
-  /** Override the mimetype — otherwise inferred from the file extension. */
+  /** Override the mimetype — otherwise inferred from the file name, then the bytes. */
   mimetype?: string;
 }
 
@@ -1025,67 +1014,42 @@ export class EviteClient {
    * mimetype declared in step 1 must match the Blob's type in step 2.
    */
   async uploadPhoto(eventId: string, input: UploadPhotoInput): Promise<UploadPhotoResult> {
-    // Confined to the upload directory before anything else (fleet-audit #1243).
-    const abs = confineUploadPath(input.path);
-    // SECURITY (fleet-audit #102): the path comes from the model, and guest-authored
-    // content (messages, RSVP notes) reaches the model verbatim — a prompt-injection
-    // channel. So the only thing trusted is the file's own bytes: whatever the
-    // extension or a declared mimetype says, the header must identify a supported
-    // image, and a declared type must agree with it. An SSH key or a session file
-    // can never be shipped to a guest-visible gallery.
+    // SECURITY (fleet-audit #102): the file is chosen by the model, and
+    // guest-authored content (messages, RSVP notes) reaches the model verbatim —
+    // a prompt-injection channel. So the only thing trusted is the bytes
+    // themselves: whatever the name or a declared mimetype says, the header must
+    // identify a supported image, and a declared type must agree with it. An SSH
+    // key or a session file can never be shipped to a guest-visible gallery.
+    // (The tool's resolvePhotoSource already checked the bytes against the type;
+    // this is the client's own guard for any other caller.)
     if (input.mimetype !== undefined && !IMAGE_MIMETYPES.includes(input.mimetype)) {
       throw new McpToolError(`Unsupported mimetype "${input.mimetype}".`, {
         hint: `Use one of ${IMAGE_MIMETYPES.join(', ')} (or omit it to infer from the file).`,
       });
     }
-    // A FILE-BACKED Blob: `fetch` streams the bytes off disk as it sends the
-    // multipart body, so a 20 MB photo never becomes a 20 MB Buffer in memory.
-    // Both file operations live in one try so any read-time I/O error (the
-    // file vanishing between awaits, EACCES, …) surfaces as the friendly
-    // message rather than a raw Node error. The type sniff and the dimensions
-    // need only the header, so readFileHead pulls just IMAGE_HEAD_BYTES off disk.
-    // Nothing leaves the machine until every check below has passed.
-    // Both reads are confined to the upload directories again at open time: a
-    // path that resolves (symlinks included) outside them is refused before a
-    // single byte is read, let alone uploaded.
-    const roots = uploadRoots();
-    let head: Buffer;
-    let blob: Blob;
-    try {
-      head = await readFileHead(abs, IMAGE_HEAD_BYTES, { allowedRoots: roots });
-      blob = await fileBlob(abs, { allowedRoots: roots });
-    } catch (e) {
-      // confineUploadPath already refused an outside path; this catches a file
-      // swapped for an outbound symlink between that check and the open.
-      /* v8 ignore next 5 -- a check-to-open race; the shared read helper refuses it */
-      if (/outside the allowed directories/.test(String(e))) {
-        throw new McpToolError(`Refusing to upload "${input.path}": it is outside the allowed upload directories.`, {
-          hint: 'EVITE_UPLOAD_DIR restricts which directories photos can be uploaded from — move the photo into one of them, or change EVITE_UPLOAD_DIR.',
-        });
-      }
-      throw new Error(`Cannot read image file: ${input.path}`);
-    }
+    const head = Buffer.from(input.bytes.buffer, input.bytes.byteOffset, input.bytes.byteLength);
     const sniffed = sniffImageMime(head);
     if (!sniffed) {
-      throw new McpToolError(`Refusing to upload "${input.path}": its contents are not an image.`, {
+      throw new McpToolError(`Refusing to upload "${input.fileName}": its contents are not an image.`, {
         hint: 'Only JPEG, PNG, GIF, WebP and HEIC/HEIF image files can be uploaded to an event album.',
       });
     }
-    const mimetype = input.mimetype ?? mimetypeForPath(abs) ?? sniffed;
+    const mimetype = input.mimetype ?? mimetypeForPath(input.fileName) ?? sniffed;
     if (!sameImageType(mimetype, sniffed)) {
       throw new McpToolError(
-        `Refusing to upload "${input.path}": it is declared ${mimetype} but its contents are ${sniffed}.`,
+        `Refusing to upload "${input.fileName}": it is declared ${mimetype} but its contents are ${sniffed}.`,
         { hint: `Omit mimetype (or pass ${sniffed}), or rename the file to match its format.` },
       );
     }
-    // The GCS policy enforces Content-Type == mimetype, so the uploaded Blob must
-    // carry the type declared in step 1 (a zero-copy re-type of the same file).
-    blob = blob.slice(0, blob.size, mimetype);
-    if (blob.size > MAX_UPLOAD_BYTES) {
+    if (head.length > MAX_UPLOAD_BYTES) {
       throw new Error(
-        `Image is ${blob.size} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
+        `Image is ${head.length} bytes; Evite's photo upload limit is ${MAX_UPLOAD_BYTES}.`,
       );
     }
+    // The GCS policy enforces Content-Type == mimetype, so the uploaded Blob must
+    // carry the type declared in step 1.
+    // (Never a SharedArrayBuffer: the bytes come from a file read, base64 or a fetch body.)
+    const blob = new Blob([head as Uint8Array<ArrayBuffer>], { type: mimetype });
     const { width, height } = imageDimensions(head, mimetype);
 
     // ── Step 1: signed-upload ticket from Evite.
@@ -1113,9 +1077,7 @@ export class EviteClient {
     // ── Step 2: multipart POST to GCS (signed fields first, then `file`; no cookies).
     const form = new FormData();
     for (const [name, value] of Object.entries(ticket.upload_form)) form.append(name, value);
-    /* v8 ignore next -- basename of a readable absolute path is never empty; `|| 'photo'` is a defensive fallback */
-    const filename = basename(abs) || 'photo';
-    form.append('file', blob, filename);
+    form.append('file', blob, input.fileName);
 
     // Not the commit (Step 4 registers the photo), so a plain error on failure;
     // a longer deadline because this carries the image bytes.

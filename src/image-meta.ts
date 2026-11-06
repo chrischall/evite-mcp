@@ -8,11 +8,18 @@
 // so a 0/0 fallback for formats we don't parse is acceptable.
 // ────────────────────────────────────────────────────────────────────────────
 
+/** Evite's photo-upload size cap (from the GCS signed-policy content-length-range). */
+export const MAX_UPLOAD_BYTES = 20_000_000;
+
 /** The 8-byte PNG file signature. */
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-/** Map a file extension to an image mimetype, or `undefined` if not an image. */
-const EXT_MIME: Record<string, string> = {
+/**
+ * Image extension → mimetype. Also the upload path guard's allowlist
+ * (`resolveUploadSource`'s `path.mimeByExt`): a path whose extension is not
+ * listed here is refused.
+ */
+export const IMAGE_EXT_MIME: Readonly<Record<string, string>> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
@@ -23,7 +30,7 @@ const EXT_MIME: Record<string, string> = {
 };
 
 /** Every image mimetype the upload accepts (each listed once). */
-export const IMAGE_MIMETYPES = [...new Set(Object.values(EXT_MIME))] as [string, ...string[]];
+export const IMAGE_MIMETYPES = [...new Set(Object.values(IMAGE_EXT_MIME))] as [string, ...string[]];
 
 /** ISO-BMFF `ftyp` brands that mark a HEIC (HEVC-coded) or generic HEIF image. */
 const HEIC_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs']);
@@ -63,7 +70,7 @@ export function sameImageType(a: string, b: string): boolean {
 export function mimetypeForPath(path: string): string | undefined {
   const dot = path.lastIndexOf('.');
   if (dot < 0) return undefined;
-  return EXT_MIME[path.slice(dot + 1).toLowerCase()];
+  return IMAGE_EXT_MIME[path.slice(dot + 1).toLowerCase()];
 }
 
 /** Pixel dimensions of an image. `{0,0}` when the format isn't parseable here. */

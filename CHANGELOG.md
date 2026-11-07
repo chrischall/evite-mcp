@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/chrischall/evite-mcp/compare/v1.4.0...v1.5.0) (2026-11-07)
+
+
+### Features
+
+* **photos:** upload photos from hosted sessions via upload slots or inline base64 ([#220](https://github.com/chrischall/evite-mcp/issues/220)) ([56b8946](https://github.com/chrischall/evite-mcp/commit/56b894610fd2c589a977f4571c796f4d61676b1d))
+
+
+### Bug Fixes
+
+* **deps:** upgrade @chrischall/mcp-utils to 3.7.2 so uploads carry only the file's bytes ([#222](https://github.com/chrischall/evite-mcp/issues/222)) ([668ed83](https://github.com/chrischall/evite-mcp/commit/668ed83a9f0502179651b65748a40def0c82a7e5))
+
 ## [1.4.0](https://github.com/chrischall/evite-mcp/compare/v1.3.7...v1.4.0) (2026-11-04)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/chrischall/evite-mcp/compare/v1.5.0...v1.5.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 2 updates ([#224](https://github.com/chrischall/evite-mcp/issues/224)) ([6ab3b57](https://github.com/chrischall/evite-mcp/commit/6ab3b5728743fe67e7b4b5e959c4aec7fa0a1adf))
+
 ## [1.5.0](https://github.com/chrischall/evite-mcp/compare/v1.4.0...v1.5.0) (2026-11-07)
 
 
